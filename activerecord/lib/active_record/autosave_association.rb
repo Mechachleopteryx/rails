@@ -155,20 +155,6 @@ module ActiveRecord
 
     module ClassMethods # :nodoc:
       private
-        if Module.method(:method_defined?).arity == 1 # MRI 2.5 and older
-          using Module.new {
-            refine Module do
-              def method_defined?(method, inherit = true)
-                if inherit
-                  super(method)
-                else
-                  instance_methods(false).include?(method.to_sym)
-                end
-              end
-            end
-          }
-        end
-
         def define_non_cyclic_method(name, &block)
           return if method_defined?(name, false)
 
@@ -249,7 +235,16 @@ module ActiveRecord
     def reload(options = nil)
       @marked_for_destruction = false
       @destroyed_by_association = nil
+      @saving = false
       super
+    end
+
+    def save(**options) # :nodoc
+      _saving { super }
+    end
+
+    def save!(**options) # :nodoc:
+      _saving { super }
     end
 
     # Marks this record to be destroyed as part of the parent's save transaction.
@@ -287,7 +282,21 @@ module ActiveRecord
       new_record? || has_changes_to_save? || marked_for_destruction? || nested_records_changed_for_autosave?
     end
 
+    protected
+      def _can_save? # :nodoc:
+        !destroyed? && !@saving
+      end
+
     private
+      # Track if this record is being saved. If it is being saved we
+      # can skip saving it in the autosave callbacks.
+      def _saving
+        previously_saving, @saving = @saving, true
+        yield
+      ensure
+        @saving = previously_saving
+      end
+
       # Returns the record for an association collection that should be validated
       # or saved. If +autosave+ is +false+ only new records will be returned,
       # unless the parent is/was a new record itself.
@@ -414,7 +423,7 @@ module ActiveRecord
             end
 
             records.each do |record|
-              next if record.destroyed?
+              next unless record._can_save?
 
               saved = true
 
@@ -451,7 +460,7 @@ module ActiveRecord
         association = association_instance_get(reflection.name)
         record      = association && association.load_target
 
-        if record && !record.destroyed?
+        if record&._can_save?
           autosave = reflection.options[:autosave]
 
           if autosave && record.marked_for_destruction?
@@ -496,7 +505,7 @@ module ActiveRecord
         return unless association && association.loaded? && !association.stale_target?
 
         record = association.load_target
-        if record && !record.destroyed?
+        if record&._can_save?
           autosave = reflection.options[:autosave]
 
           if autosave && record.marked_for_destruction?

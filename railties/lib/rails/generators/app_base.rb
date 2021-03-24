@@ -97,8 +97,8 @@ module Rails
         class_option :edge,                type: :boolean, default: false,
                                            desc: "Set up the #{name} with Gemfile pointing to Rails repository"
 
-        class_option :master,              type: :boolean, default: false,
-                                           desc: "Set up the #{name} with Gemfile pointing to Rails repository master branch"
+        class_option :main,                type: :boolean, default: false, aliases: "--master",
+                                           desc: "Set up the #{name} with Gemfile pointing to Rails repository main branch"
 
         class_option :rc,                  type: :string, default: nil,
                                            desc: "Path to file containing extra configuration options for rails command"
@@ -276,17 +276,18 @@ module Rails
             GemfileEntry.path("rails", Rails::Generators::RAILS_DEV_PATH)
           ]
         elsif options.edge?
+          edge_branch = Rails.gem_version.prerelease? ? "main" : [*Rails.gem_version.segments.first(2), "stable"].join("-")
           [
-            GemfileEntry.github("rails", "rails/rails")
+            GemfileEntry.github("rails", "rails/rails", edge_branch)
           ]
-        elsif options.master?
+        elsif options.main?
           [
-            GemfileEntry.github("rails", "rails/rails", "master")
+            GemfileEntry.github("rails", "rails/rails", "main")
           ]
         else
           [GemfileEntry.version("rails",
                             rails_version_specifier,
-                            "Bundle edge Rails instead: gem 'rails', github: 'rails/rails'")]
+                            "Bundle edge Rails instead: gem 'rails', github: 'rails/rails', branch: 'main'")]
         end
       end
 
@@ -405,11 +406,19 @@ module Rails
       end
 
       def run_webpack
-        if webpack_install?
-          rails_command "webpacker:install"
-          if options[:webpack] && options[:webpack] != "webpack"
-            rails_command "webpacker:install:#{options[:webpack]}"
-          end
+        return unless webpack_install?
+
+        unless bundle_install?
+          say <<~EXPLAIN
+            Skipping `rails webpacker:install` because `bundle install` was skipped.
+            To complete setup, you must run `bundle install` followed by `rails webpacker:install`.
+          EXPLAIN
+          return
+        end
+
+        rails_command "webpacker:install"
+        if options[:webpack] && options[:webpack] != "webpack"
+          rails_command "webpacker:install:#{options[:webpack]}"
         end
       end
 

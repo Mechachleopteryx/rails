@@ -169,7 +169,7 @@ ActiveRecord::Schema.define do
     t.integer :categorizations_count
   end
 
-  create_table :categories_posts, force: true, id: false do |t|
+  create_table :categories_posts, force: true do |t|
     t.integer :category_id, null: false
     t.integer :post_id, null: false
   end
@@ -220,12 +220,15 @@ ActiveRecord::Schema.define do
     t.integer :children_count, default: 0
     t.integer :parent_id
     t.references :author, polymorphic: true
+    # The type of the attribute is a string to make sure preload work when types don't match.
+    # See #14855.
     t.string :resource_id
     t.string :resource_type
     t.integer :developer_id
     t.datetime :updated_at
     t.datetime :deleted_at
     t.integer :comments
+    t.integer :company
   end
 
   create_table :companies, force: true do |t|
@@ -266,11 +269,13 @@ ActiveRecord::Schema.define do
     t.integer :developer, null: false
     t.integer :extendedWarranty, null: false
     t.integer :timezone
+    t.timestamps
   end
 
   create_table :computers_developers, id: false, force: true do |t|
     t.references :computer
     t.references :developer
+    t.timestamps
   end
 
   create_table :contracts, force: true do |t|
@@ -310,38 +315,41 @@ ActiveRecord::Schema.define do
     t.boolean :deleted
   end
 
+  create_table :discounts, force: true do |t|
+    t.integer :amount
+  end
+
   create_table :dl_keyed_belongs_tos, force: true, id: false do |t|
     t.primary_key :belongs_key
     t.references :destroy_async_parent
   end
 
   create_table :dl_keyed_belongs_to_soft_deletes, force: true do |t|
-    t.references :destroy_async_parent_soft_delete,
-      index: { name: :soft_del_parent }
+    t.references :destroy_async_parent_soft_delete, index: { name: :soft_del_parent }
     t.boolean :deleted
   end
 
   create_table :dl_keyed_has_ones, force: true, id: false do |t|
-   t.primary_key :has_one_key
+    t.primary_key :has_one_key
 
-   t.references :destroy_async_parent
-   t.references :destroy_async_parent_soft_delete
- end
+    t.references :destroy_async_parent
+    t.references :destroy_async_parent_soft_delete
+  end
 
   create_table :dl_keyed_has_manies, force: true, id: false do |t|
-   t.primary_key :many_key
-   t.references :destroy_async_parent
- end
+    t.primary_key :many_key
+    t.references :destroy_async_parent
+  end
 
   create_table :dl_keyed_has_many_throughs, force: true, id: false do |t|
-   t.primary_key :through_key
- end
+    t.primary_key :through_key
+  end
 
   create_table :dl_keyed_joins, force: true, id: false do |t|
-   t.primary_key :joins_key
-   t.references :destroy_async_parent
-   t.references :dl_keyed_has_many_through
- end
+    t.primary_key :joins_key
+    t.references :destroy_async_parent
+    t.references :dl_keyed_has_many_through
+  end
 
   create_table :developers, force: true do |t|
     t.string   :name
@@ -544,6 +552,11 @@ ActiveRecord::Schema.define do
     t.integer :amount
   end
 
+  create_table :line_item_discount_applications, force: true do |t|
+    t.integer :line_item_id
+    t.integer :discount_id
+  end
+
   create_table :lions, force: true do |t|
     t.integer :gender
     t.boolean :is_vegetarian, default: false
@@ -740,7 +753,14 @@ ActiveRecord::Schema.define do
       t.references :pirate, foreign_key: true
     end
 
+    # used by tests that do `Parrot.has_and_belongs_to_many :treasures` (the default)
     create_table :parrots_treasures, id: false, force: true do |t|
+      t.references :parrot, foreign_key: true
+      t.references :treasure, foreign_key: true
+    end
+
+    # used by tests that do `Parrot.has_many :treasures, through: :parrot_treasures`, and don't want to override the through relation's `table_name`
+    create_table :parrot_treasures, id: false, force: true do |t|
       t.references :parrot, foreign_key: true
       t.references :treasure, foreign_key: true
     end
@@ -803,6 +823,11 @@ ActiveRecord::Schema.define do
     t.integer :indestructible_tags_count, default: 0
     t.integer :tags_with_destroy_count, default: 0
     t.integer :tags_with_nullify_count, default: 0
+  end
+
+  create_table :postesques, force: true do |t|
+    t.string :author_name
+    t.string :author_id
   end
 
   create_table :serialized_posts, force: true do |t|
@@ -905,6 +930,16 @@ ActiveRecord::Schema.define do
     t.integer :paint_id
     t.string  :shape_type
     t.integer :shape_id
+  end
+
+  create_table :shipping_lines, force: true do |t|
+    t.integer :invoice_id
+    t.integer :amount
+  end
+
+  create_table :shipping_line_discount_applications, force: true do |t|
+    t.integer :shipping_line_id
+    t.integer :discount_id
   end
 
   create_table :ships, force: true do |t|

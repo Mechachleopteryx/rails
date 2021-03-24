@@ -99,6 +99,8 @@ module ActiveRecord
       def scope
         if (scope = klass.current_scope) && scope.try(:proxy_association) == self
           scope.spawn
+        elsif scope = klass.global_current_scope
+          target_scope.merge!(association_scope).merge!(scope)
         else
           target_scope.merge!(association_scope)
         end
@@ -211,7 +213,7 @@ module ActiveRecord
 
       private
         def find_target
-          if (owner.strict_loading? || reflection.strict_loading?) && owner.validation_context.nil?
+          if strict_loading? && owner.validation_context.nil?
             Base.strict_loading_violation!(owner: owner.class, reflection: reflection)
           end
 
@@ -225,6 +227,12 @@ module ActiveRecord
 
           binds = AssociationScope.get_bind_values(owner, reflection.chain)
           sc.execute(binds, klass.connection) { |record| set_inverse_instance(record) }
+        end
+
+        def strict_loading?
+          return reflection.strict_loading? if reflection.options.key?(:strict_loading)
+
+          owner.strict_loading?
         end
 
         # The scope for this association.
@@ -327,7 +335,11 @@ module ActiveRecord
         end
 
         def enqueue_destroy_association(options)
-          owner.class.destroy_association_async_job&.perform_later(**options)
+          job_class = owner.class.destroy_association_async_job
+
+          if job_class
+            owner._after_commit_jobs.push([job_class, options])
+          end
         end
 
         def inversable?(record)

@@ -31,6 +31,8 @@ module ActiveRecord
       @loaded = false
       @predicate_builder = predicate_builder
       @delegate_to_klass = false
+      @future_result = nil
+      @records = nil
     end
 
     def initialize_copy(other)
@@ -67,8 +69,12 @@ module ActiveRecord
     #   user = users.new { |user| user.name = 'Oscar' }
     #   user.name # => Oscar
     def new(attributes = nil, &block)
-      block = current_scope_restoring_block(&block)
-      scoping { _new(attributes, &block) }
+      if attributes.is_a?(Array)
+        attributes.collect { |attr| new(attr, &block) }
+      else
+        block = current_scope_restoring_block(&block)
+        scoping { _new(attributes, &block) }
+      end
     end
     alias build new
 
@@ -257,13 +263,20 @@ module ActiveRecord
 
     # Returns size of the records.
     def size
-      loaded? ? @records.length : count(:all)
+      if loaded?
+        records.length
+      else
+        count(:all)
+      end
     end
 
     # Returns true if there are no records.
     def empty?
-      return @records.empty? if loaded?
-      !exists?
+      if loaded?
+        records.empty?
+      else
+        !exists?
+      end
     end
 
     # Returns true if there are no records.
@@ -400,10 +413,21 @@ module ActiveRecord
     #   end
     #   # => SELECT "comments".* FROM "comments" WHERE "comments"."post_id" = 1 ORDER BY "comments"."id" ASC LIMIT 1
     #
+    # If <tt>all_queries: true</tt> is passed, scoping will apply to all queries
+    # for the relation including +update+ and +delete+ on instances.
+    # Once +all_queries+ is set to true it cannot be set to false in a
+    # nested block.
+    #
     # Please check unscoped if you want to remove all previous scopes (including
     # the default_scope) during the execution of a block.
-    def scoping
-      already_in_scope? ? yield : _scoping(self) { yield }
+    def scoping(all_queries: nil)
+      if global_scope? && all_queries == false
+        raise ArgumentError, "Scoping is set to apply to all queries and cannot be unset in a nested block."
+      elsif already_in_scope?
+        yield
+      else
+        _scoping(self, all_queries) { yield }
+      end
     end
 
     def _exec_scope(*args, &block) # :nodoc:
@@ -445,14 +469,6 @@ module ActiveRecord
         return relation.update_all(updates)
       end
 
-      stmt = Arel::UpdateManager.new
-      stmt.table(arel.join_sources.empty? ? table : arel.source)
-      stmt.key = table[primary_key]
-      stmt.take(arel.limit)
-      stmt.offset(arel.offset)
-      stmt.order(*arel.orders)
-      stmt.wheres = arel.constraints
-
       if updates.is_a?(Hash)
         if klass.locking_enabled? &&
             !updates.key?(klass.locking_column) &&
@@ -460,12 +476,18 @@ module ActiveRecord
           attr = table[klass.locking_column]
           updates[attr.name] = _increment_attribute(attr)
         end
-        stmt.set _substitute_values(updates)
+        values = _substitute_values(updates)
       else
-        stmt.set Arel.sql(klass.sanitize_sql_for_assignment(updates, table.name))
+        values = Arel.sql(klass.sanitize_sql_for_assignment(updates, table.name))
       end
 
-      @klass.connection.update stmt, "#{@klass} Update All"
+      source = arel.source.clone
+      source.left = table
+
+      stmt = arel.compile_update(values, table[primary_key])
+      stmt.table(source)
+
+      klass.connection.update(stmt, "#{klass} Update All")
     end
 
     def update(id = :all, attributes) # :nodoc:
@@ -587,15 +609,13 @@ module ActiveRecord
         return relation.delete_all
       end
 
-      stmt = Arel::DeleteManager.new
-      stmt.from(arel.join_sources.empty? ? table : arel.source)
-      stmt.key = table[primary_key]
-      stmt.take(arel.limit)
-      stmt.offset(arel.offset)
-      stmt.order(*arel.orders)
-      stmt.wheres = arel.constraints
+      source = arel.source.clone
+      source.left = table
 
-      affected = @klass.connection.delete(stmt, "#{@klass} Destroy")
+      stmt = arel.compile_delete(table[primary_key])
+      stmt.from(source)
+
+      affected = klass.connection.delete(stmt, "#{klass} Destroy")
 
       reset
       affected
@@ -627,6 +647,32 @@ module ActiveRecord
       where(*args).delete_all
     end
 
+    # Schedule the query to be performed from a background thread pool.
+    #
+    #   Post.where(published: true).load_async # => #<ActiveRecord::Relation>
+    def load_async
+      return load if !connection.async_enabled?
+
+      unless loaded?
+        result = exec_main_query(async: connection.current_transaction.closed?)
+
+        if result.is_a?(Array)
+          @records = result
+        else
+          @future_result = result
+        end
+        @loaded = true
+      end
+
+      self
+    end
+
+    # Returns <tt>true</tt> if the relation was scheduled on the background
+    # thread pool.
+    def scheduled?
+      !!@future_result
+    end
+
     # Causes the records to be loaded from the database if they have not
     # been loaded already. You can use this if for some reason you need
     # to explicitly load some records before actually using them. The
@@ -634,7 +680,7 @@ module ActiveRecord
     #
     #   Post.where(published: true).load # => #<ActiveRecord::Relation>
     def load(&block)
-      unless loaded?
+      if !loaded? || scheduled?
         @records = exec_queries(&block)
         @loaded = true
       end
@@ -649,10 +695,12 @@ module ActiveRecord
     end
 
     def reset
+      @future_result&.cancel
+      @future_result = nil
       @delegate_to_klass = false
       @to_sql = @arel = @loaded = @should_eager_load = nil
       @offsets = @take = nil
-      @records = [].freeze
+      @records = nil
       self
     end
 
@@ -683,8 +731,7 @@ module ActiveRecord
     end
 
     def scope_for_create
-      hash = where_values_hash
-      hash.delete(klass.inheritance_column) if klass.finder_needs_type_condition?
+      hash = where_clause.to_h(klass.table_name, equality_only: true)
       create_with_value.each { |k, v| hash[k.to_s] = v } unless create_with_value.empty?
       hash
     end
@@ -727,6 +774,10 @@ module ActiveRecord
 
     def values
       @values.dup
+    end
+
+    def values_for_queries # :nodoc:
+      @values.except(:extending, :skip_query_cache, :strict_loading)
     end
 
     def inspect
@@ -784,6 +835,10 @@ module ActiveRecord
         @delegate_to_klass && klass.current_scope(true)
       end
 
+      def global_scope?
+        klass.global_current_scope(true)
+      end
+
       def current_scope_restoring_block(&block)
         current_scope = klass.current_scope(true)
         -> record do
@@ -804,11 +859,17 @@ module ActiveRecord
         klass.create!(attributes, &block)
       end
 
-      def _scoping(scope)
+      def _scoping(scope, all_queries = false)
         previous, klass.current_scope = klass.current_scope(true), scope
+        if all_queries
+          previous_global, klass.global_current_scope = klass.global_current_scope(true), scope
+        end
         yield
       ensure
         klass.current_scope = previous
+        if all_queries
+          klass.global_current_scope = previous_global
+        end
       end
 
       def _substitute_values(values)
@@ -831,29 +892,52 @@ module ActiveRecord
 
       def exec_queries(&block)
         skip_query_cache_if_necessary do
-          records =
-            if where_clause.contradiction?
-              []
-            elsif eager_loading?
-              apply_join_dependency do |relation, join_dependency|
-                if relation.null_relation?
-                  []
-                else
-                  relation = join_dependency.apply_column_aliases(relation)
-                  rows = connection.select_all(relation.arel, "SQL")
-                  join_dependency.instantiate(rows, strict_loading_value, &block)
-                end.freeze
-              end
-            else
-              klass.find_by_sql(arel, &block).freeze
-            end
+          rows = if scheduled?
+            future = @future_result
+            @future_result = nil
+            future.result
+          else
+            exec_main_query
+          end
 
+          records = instantiate_records(rows, &block)
           preload_associations(records) unless skip_preloading_value
 
           records.each(&:readonly!) if readonly_value
           records.each(&:strict_loading!) if strict_loading_value
 
           records
+        end
+      end
+
+      def exec_main_query(async: false)
+        skip_query_cache_if_necessary do
+          if where_clause.contradiction?
+            [].freeze
+          elsif eager_loading?
+            apply_join_dependency do |relation, join_dependency|
+              if relation.null_relation?
+                [].freeze
+              else
+                relation = join_dependency.apply_column_aliases(relation)
+                @_join_dependency = join_dependency
+                connection.select_all(relation.arel, "SQL", async: async)
+              end
+            end
+          else
+            klass._query_by_sql(arel, async: async)
+          end
+        end
+      end
+
+      def instantiate_records(rows, &block)
+        return [].freeze if rows.empty?
+        if eager_loading?
+          records = @_join_dependency.instantiate(rows, strict_loading_value, &block).freeze
+          @_join_dependency = nil
+          records
+        else
+          klass._load_from_sql(rows, &block).freeze
         end
       end
 

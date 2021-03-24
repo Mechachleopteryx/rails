@@ -120,6 +120,14 @@ module ActiveRecord
       #     { id: 1, title: "Rework", author: "David" },
       #     { id: 1, title: "Eloquent Ruby", author: "Russ" }
       #   ])
+      #
+      #   # insert_all works on chained scopes, and you can use create_with
+      #   # to set default attributes for all inserted records.
+      #
+      #   author.books.create_with(created_at: Time.now).insert_all([
+      #     { id: 1, title: "Rework" },
+      #     { id: 2, title: "Eloquent Ruby" }
+      #   ])
       def insert_all(attributes, returning: nil, unique_by: nil)
         InsertAll.new(self, attributes, on_duplicate: :skip, returning: returning, unique_by: unique_by).execute
       end
@@ -356,48 +364,54 @@ module ActiveRecord
         primary_key = self.primary_key
         primary_key_value = nil
 
-        if primary_key && Hash === values
-          primary_key_value = values[primary_key]
-
-          if !primary_key_value && prefetch_primary_key?
+        if prefetch_primary_key? && primary_key
+          values[primary_key] ||= begin
             primary_key_value = next_sequence_value
-            values[primary_key] = primary_key_value
+            _default_attributes[primary_key].with_cast_value(primary_key_value)
           end
         end
 
+        im = Arel::InsertManager.new(arel_table)
+
         if values.empty?
-          im = arel_table.compile_insert(connection.empty_insert_statement_value(primary_key))
-          im.into arel_table
+          im.insert(connection.empty_insert_statement_value(primary_key))
         else
-          im = arel_table.compile_insert(_substitute_values(values))
+          im.insert(values.transform_keys { |name| arel_table[name] })
         end
 
         connection.insert(im, "#{self} Create", primary_key || false, primary_key_value)
       end
 
       def _update_record(values, constraints) # :nodoc:
-        constraints = _substitute_values(constraints).map { |attr, bind| attr.eq(bind) }
+        constraints = constraints.map { |name, value| predicate_builder[name, value] }
 
         if default_scopes?(all_queries: true)
           constraints << default_scoped(all_queries: true).where_clause.ast
         end
 
-        um = arel_table.where(
-          constraints.reduce(&:and)
-        ).compile_update(_substitute_values(values), primary_key)
+        if current_scope = self.global_current_scope
+          constraints << current_scope.where_clause.ast
+        end
+
+        um = Arel::UpdateManager.new(arel_table)
+        um.set(values.transform_keys { |name| arel_table[name] })
+        um.wheres = constraints
 
         connection.update(um, "#{self} Update")
       end
 
       def _delete_record(constraints) # :nodoc:
-        constraints = _substitute_values(constraints).map { |attr, bind| attr.eq(bind) }
+        constraints = constraints.map { |name, value| predicate_builder[name, value] }
 
         if default_scopes?(all_queries: true)
           constraints << default_scoped(all_queries: true).where_clause.ast
         end
 
-        dm = Arel::DeleteManager.new
-        dm.from(arel_table)
+        if current_scope = self.global_current_scope
+          constraints << current_scope.where_clause.ast
+        end
+
+        dm = Arel::DeleteManager.new(arel_table)
         dm.wheres = constraints
 
         connection.delete(dm, "#{self} Destroy")
@@ -418,14 +432,6 @@ module ActiveRecord
         # the single-table inheritance discriminator.
         def discriminate_class_for_record(record)
           self
-        end
-
-        def _substitute_values(values)
-          values.map do |name, value|
-            attr = arel_table[name]
-            bind = predicate_builder.build_bind_attribute(attr.name, value)
-            [attr, bind]
-          end
         end
     end
 
@@ -679,14 +685,15 @@ module ActiveRecord
         verify_readonly_attribute(name) || name
       end
 
-      id_in_database = self.id_in_database
-      attributes.each do |k, v|
-        write_attribute_without_type_cast(k, v)
+      update_constraints = _primary_key_constraints_hash
+      attributes = attributes.each_with_object({}) do |(k, v), h|
+        h[k] = @attributes.write_cast_value(k, v)
+        clear_attribute_change(k)
       end
 
       affected_rows = self.class._update_record(
         attributes,
-        @primary_key => id_in_database
+        update_constraints
       )
 
       affected_rows == 1
@@ -808,7 +815,7 @@ module ActiveRecord
     def reload(options = nil)
       self.class.connection.clear_query_cache
 
-      fresh_object = if self.class.default_scopes?(all_queries: true) && !(options && options[:unscoped])
+      fresh_object = if apply_scoping?(options)
         _find_record(options)
       else
         self.class.unscoped { _find_record(options) }
@@ -880,6 +887,15 @@ module ActiveRecord
       end
     end
 
+    def apply_scoping?(options)
+      !(options && options[:unscoped]) &&
+        (self.class.default_scopes?(all_queries: true) || self.class.global_current_scope)
+    end
+
+    def _primary_key_constraints_hash
+      { @primary_key => id_in_database }
+    end
+
     # A hook to be overridden by association modules.
     def destroy_associations
     end
@@ -889,7 +905,7 @@ module ActiveRecord
     end
 
     def _delete_row
-      self.class._delete_record(@primary_key => id_in_database)
+      self.class._delete_record(_primary_key_constraints_hash)
     end
 
     def _touch_row(attribute_names, time)
@@ -905,7 +921,7 @@ module ActiveRecord
     def _update_row(attribute_names, attempted_action = "update")
       self.class._update_record(
         attributes_with_values(attribute_names),
-        @primary_key => id_in_database
+        _primary_key_constraints_hash
       )
     end
 
