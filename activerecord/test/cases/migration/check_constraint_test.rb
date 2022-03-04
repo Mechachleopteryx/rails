@@ -18,10 +18,16 @@ if ActiveRecord::Base.connection.supports_check_constraints?
             t.integer :price
             t.integer :quantity
           end
+
+          @connection.create_table "purchases", force: true do |t|
+            t.integer :price
+            t.integer :quantity
+          end
         end
 
         teardown do
           @connection.drop_table "trades", if_exists: true rescue nil
+          @connection.drop_table "purchases", if_exists: true rescue nil
         end
 
         def test_check_constraints
@@ -36,6 +42,19 @@ if ActiveRecord::Base.connection.supports_check_constraints?
             assert_equal "`price` > `discounted_price`", constraint.expression
           else
             assert_equal "price > discounted_price", constraint.expression
+          end
+
+          if current_adapter?(:PostgreSQLAdapter)
+            begin
+              # Test that complex expression is correctly parsed from the database
+              @connection.add_check_constraint(:trades,
+                "CASE WHEN price IS NOT NULL THEN true ELSE false END", name: "price_is_required")
+
+              constraint = @connection.check_constraints("trades").find { |c| c.name == "price_is_required" }
+              assert_includes constraint.expression, "WHEN price IS NOT NULL"
+            ensure
+              @connection.remove_check_constraint(:trades, name: "price_is_required")
+            end
           end
         end
 
@@ -53,6 +72,25 @@ if ActiveRecord::Base.connection.supports_check_constraints?
             assert_equal "`quantity` > 0", constraint.expression
           else
             assert_equal "quantity > 0", constraint.expression
+          end
+        end
+
+        if supports_non_unique_constraint_name?
+          def test_add_constraint_with_same_name_to_different_table
+            @connection.add_check_constraint :trades, "quantity > 0", name: "greater_than_zero"
+            @connection.add_check_constraint :purchases, "quantity > 0", name: "greater_than_zero"
+
+            trades_check_constraints = @connection.check_constraints("trades")
+            assert_equal 1, trades_check_constraints.size
+            trade_constraint = trades_check_constraints.first
+            assert_equal "trades", trade_constraint.table_name
+            assert_equal "greater_than_zero", trade_constraint.name
+
+            purchases_check_constraints = @connection.check_constraints("purchases")
+            assert_equal 1, purchases_check_constraints.size
+            purchase_constraint = purchases_check_constraints.first
+            assert_equal "purchases", purchase_constraint.table_name
+            assert_equal "greater_than_zero", purchase_constraint.name
           end
         end
 
@@ -131,6 +169,26 @@ if ActiveRecord::Base.connection.supports_check_constraints?
           assert_raises(ArgumentError) do
             @connection.remove_check_constraint :trades, name: "nonexistent"
           end
+        end
+
+        def test_add_constraint_from_change_table_with_options
+          @connection.change_table :trades do |t|
+            t.check_constraint "price > 0", name: "price_check"
+          end
+
+          constraint = @connection.check_constraints("trades").first
+          assert_equal "trades", constraint.table_name
+          assert_equal "price_check", constraint.name
+        end
+
+        def test_remove_constraint_from_change_table_with_options
+          @connection.add_check_constraint :trades, "price > 0", name: "price_check"
+
+          @connection.change_table :trades do |t|
+            t.remove_check_constraint "price > 0", name: "price_check"
+          end
+
+          assert_equal 0, @connection.check_constraints("trades").size
         end
       end
     end

@@ -1,8 +1,26 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/object/deep_dup"
+require "active_support/core_ext/array/wrap"
 
-module ActionDispatch #:nodoc:
+module ActionDispatch # :nodoc:
+  # Configures the HTTP
+  # {Content-Security-Policy}[https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy]
+  # response header to help protect against XSS and injection attacks.
+  #
+  # Example global policy:
+  #
+  #   Rails.application.config.content_security_policy do |policy|
+  #     policy.default_src :self, :https
+  #     policy.font_src    :self, :https, :data
+  #     policy.img_src     :self, :https, :data
+  #     policy.object_src  :none
+  #     policy.script_src  :self, :https
+  #     policy.style_src   :self, :https
+  #
+  #     # Specify URI for violation reports
+  #     policy.report_uri "/csp-violation-report-endpoint"
+  #   end
   class ContentSecurityPolicy
     class Middleware
       CONTENT_TYPE = "Content-Type"
@@ -106,43 +124,47 @@ module ActionDispatch #:nodoc:
     end
 
     MAPPINGS = {
-      self:           "'self'",
-      unsafe_eval:    "'unsafe-eval'",
-      unsafe_inline:  "'unsafe-inline'",
-      none:           "'none'",
-      http:           "http:",
-      https:          "https:",
-      data:           "data:",
-      mediastream:    "mediastream:",
-      blob:           "blob:",
-      filesystem:     "filesystem:",
-      report_sample:  "'report-sample'",
-      strict_dynamic: "'strict-dynamic'",
-      ws:             "ws:",
-      wss:            "wss:"
+      self:             "'self'",
+      unsafe_eval:      "'unsafe-eval'",
+      unsafe_inline:    "'unsafe-inline'",
+      none:             "'none'",
+      http:             "http:",
+      https:            "https:",
+      data:             "data:",
+      mediastream:      "mediastream:",
+      allow_duplicates: "'allow-duplicates'",
+      blob:             "blob:",
+      filesystem:       "filesystem:",
+      report_sample:    "'report-sample'",
+      script:           "'script'",
+      strict_dynamic:   "'strict-dynamic'",
+      ws:               "ws:",
+      wss:              "wss:"
     }.freeze
 
     DIRECTIVES = {
-      base_uri:        "base-uri",
-      child_src:       "child-src",
-      connect_src:     "connect-src",
-      default_src:     "default-src",
-      font_src:        "font-src",
-      form_action:     "form-action",
-      frame_ancestors: "frame-ancestors",
-      frame_src:       "frame-src",
-      img_src:         "img-src",
-      manifest_src:    "manifest-src",
-      media_src:       "media-src",
-      object_src:      "object-src",
-      prefetch_src:    "prefetch-src",
-      script_src:      "script-src",
-      script_src_attr: "script-src-attr",
-      script_src_elem: "script-src-elem",
-      style_src:       "style-src",
-      style_src_attr:  "style-src-attr",
-      style_src_elem:  "style-src-elem",
-      worker_src:      "worker-src"
+      base_uri:                   "base-uri",
+      child_src:                  "child-src",
+      connect_src:                "connect-src",
+      default_src:                "default-src",
+      font_src:                   "font-src",
+      form_action:                "form-action",
+      frame_ancestors:            "frame-ancestors",
+      frame_src:                  "frame-src",
+      img_src:                    "img-src",
+      manifest_src:               "manifest-src",
+      media_src:                  "media-src",
+      object_src:                 "object-src",
+      prefetch_src:               "prefetch-src",
+      require_trusted_types_for:  "require-trusted-types-for",
+      script_src:                 "script-src",
+      script_src_attr:            "script-src-attr",
+      script_src_elem:            "script-src-elem",
+      style_src:                  "style-src",
+      style_src_attr:             "style-src-attr",
+      style_src_elem:             "style-src-elem",
+      trusted_types:              "trusted-types",
+      worker_src:                 "worker-src"
     }.freeze
 
     DEFAULT_NONCE_DIRECTIVES = %w[script-src style-src].freeze
@@ -170,6 +192,15 @@ module ActionDispatch #:nodoc:
       end
     end
 
+    # Specify whether to prevent the user agent from loading any assets over
+    # HTTP when the page uses HTTPS:
+    #
+    #   policy.block_all_mixed_content
+    #
+    # Pass +false+ to allow it again:
+    #
+    #   policy.block_all_mixed_content false
+    #
     def block_all_mixed_content(enabled = true)
       if enabled
         @directives["block-all-mixed-content"] = true
@@ -178,6 +209,14 @@ module ActionDispatch #:nodoc:
       end
     end
 
+    # Restricts the set of plugins that can be embedded:
+    #
+    #   policy.plugin_types "application/x-shockwave-flash"
+    #
+    # Leave empty to allow all plugins:
+    #
+    #   policy.plugin_types
+    #
     def plugin_types(*types)
       if types.first
         @directives["plugin-types"] = types
@@ -186,10 +225,24 @@ module ActionDispatch #:nodoc:
       end
     end
 
+    # Enable the {report-uri}[https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/report-uri]
+    # directive. Violation reports will be sent to the specified URI:
+    #
+    #   policy.report_uri "/csp-violation-report-endpoint"
+    #
     def report_uri(uri)
       @directives["report-uri"] = [uri]
     end
 
+    # Specify asset types for which {Subresource Integrity}[https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity]
+    # is required:
+    #
+    #   policy.require_sri_for :script, :style
+    #
+    # Leave empty to not require Subresource Integrity:
+    #
+    #   policy.require_sri_for
+    #
     def require_sri_for(*types)
       if types.first
         @directives["require-sri-for"] = types
@@ -198,6 +251,19 @@ module ActionDispatch #:nodoc:
       end
     end
 
+    # Specify whether a {sandbox}[https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/sandbox]
+    # should be enabled for the requested resource:
+    #
+    #   policy.sandbox
+    #
+    # Values can be passed as arguments:
+    #
+    #   policy.sandbox "allow-scripts", "allow-modals"
+    #
+    # Pass +false+ to disable the sandbox:
+    #
+    #   policy.sandbox false
+    #
     def sandbox(*values)
       if values.empty?
         @directives["sandbox"] = true
@@ -208,6 +274,14 @@ module ActionDispatch #:nodoc:
       end
     end
 
+    # Specify whether user agents should treat any assets over HTTP as HTTPS:
+    #
+    #   policy.upgrade_insecure_requests
+    #
+    # Pass +false+ to disable it:
+    #
+    #   policy.upgrade_insecure_requests false
+    #
     def upgrade_insecure_requests(enabled = true)
       if enabled
         @directives["upgrade-insecure-requests"] = true
@@ -272,7 +346,7 @@ module ActionDispatch #:nodoc:
             raise RuntimeError, "Missing context for the dynamic content security policy source: #{source.inspect}"
           else
             resolved = context.instance_exec(&source)
-            resolved.is_a?(Symbol) ? apply_mapping(resolved) : resolved
+            apply_mappings(Array.wrap(resolved))
           end
         else
           raise RuntimeError, "Unexpected content security policy source: #{source.inspect}"

@@ -1,11 +1,9 @@
-*   Add `in: range`  parameter to `numericality` validator.
+*   Use different cache namespace for proxy calls
 
-    *Michal Papis*
+    Models can currently have different attribute bodies for the same method
+    names, leading to conflicts. Adding a new namespace `:active_model_proxy`
+    fixes the issue.
 
-*   Add `locale` argument to `ActiveModel::Name#initialize` to be used to generate the `singular`,
-   `plural`, `route_key` and `singular_route_key` values.
+    *Chris Salzberg*
 
-    *Lukas Pokorny*
-
-
-Please check [6-1-stable](https://github.com/rails/rails/blob/6-1-stable/activemodel/CHANGELOG.md) for previous changes.
+Please check [7-0-stable](https://github.com/rails/rails/blob/7-0-stable/activemodel/CHANGELOG.md) for previous changes.

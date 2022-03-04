@@ -457,6 +457,13 @@ class CookiesTest < ActionController::TestCase
     assert_equal({ "user_name" => "david" }, @response.cookies)
   end
 
+  def test_setting_cookie_with_secure_on_onion_address
+    @request.host = "fake.onion"
+    get :authenticate_with_secure
+    assert_cookie_header "user_name=david; path=/; secure; SameSite=Lax"
+    assert_equal({ "user_name" => "david" }, @response.cookies)
+  end
+
   def test_setting_cookie_with_secure_when_always_write_cookie_is_true
     old_cookie, @request.cookie_jar.always_write_cookie = @request.cookie_jar.always_write_cookie, true
     get :authenticate_with_secure
@@ -1162,7 +1169,7 @@ class CookiesTest < ActionController::TestCase
     assert_cookie_header "user_name=rizwanreza; domain=.example3.com; path=/; SameSite=Lax"
   end
 
-  def test_deletings_cookie_with_several_preset_domains_using_one_of_these_domains
+  def test_deleting_cookie_with_several_preset_domains_using_one_of_these_domains
     @request.host = "example2.com"
     request.cookies[:user_name] = "Joe"
     get :delete_cookie_with_domains
@@ -1170,7 +1177,7 @@ class CookiesTest < ActionController::TestCase
     assert_cookie_header "user_name=; domain=example2.com; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"
   end
 
-  def test_deletings_cookie_with_several_preset_domains_using_other_domain
+  def test_deleting_cookie_with_several_preset_domains_using_other_domain
     @request.host = "other-domain.com"
     request.cookies[:user_name] = "Joe"
     get :delete_cookie_with_domains

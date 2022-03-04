@@ -1,73 +1,35 @@
-*   Tests parallelization is now disabled when running individual files to prevent the setup overhead.
+*   `Pathname.blank?` only returns true for `Pathname.new("")`
 
-    It can still be enforced if the environment variable `PARALLEL_WORKERS` is present and set to a value greater than 1.
+    Previously it would end up calling `Pathname#empty?` which returned true
+    if the path existed and was an empty directory or file.
 
-    *Ricardo Díaz*
+    That behavior was unlikely to be expected.
 
-*   Fix proxying keyword arguments in `ActiveSupport::CurrentAttributes`.
+    *Jean Boussier*
 
-    *Marcin Kołodziej*
+*   Deprecate `Notification::Event`'s `#children` and `#parent_of?`
 
-*   Add `Enumerable#maximum` and `Enumerable#minimum` to easily calculate the maximum or minimum from extracted
-    elements of an enumerable.
+*   Change default serialization format of `MessageEncryptor` from `Marshal` to `JSON` for Rails 7.1.
 
-    ```ruby
-    payments = [Payment.new(5), Payment.new(15), Payment.new(10)]
+    Existing apps are provided with an upgrade path to migrate to `JSON` as described in `guides/source/upgrading_ruby_on_rails.md`
 
-    payments.minimum(:price) # => 5
-    payments.maximum(:price) # => 15
-    ```
+    *Zack Deveau* and *Martin Gingras*
 
-    This also allows passing enumerables to `fresh_when` and `stale?` in Action Controller.
-    See PR [#41404](https://github.com/rails/rails/pull/41404) for an example.
-
-    *Ayrton De Craene*
-
-*   `ActiveSupport::Cache::MemCacheStore` now accepts an explicit `nil` for its `addresses` argument.
-
-    ```ruby
-    config.cache_store = :mem_cache_store, nil
-
-    # is now equivalent to
-
-    config.cache_store = :mem_cache_store
-
-    # and is also equivalent to
-
-    config.cache_store = :mem_cache_store, ENV["MEMCACHE_SERVERS"] || "localhost:11211"
-
-    # which is the fallback behavior of Dalli
-    ```
-
-    This helps those migrating from `:dalli_store`, where an explicit `nil` was permitted.
-
-    *Michael Overmeyer*
-
-*   Add `Enumerable#in_order_of` to put an Enumerable in a certain order by a key.
+*   Add `ActiveSupport::TestCase#stub_const` to stub a constant for the duration of a yield.
 
     *DHH*
 
-*   `ActiveSupport::Inflector.camelize` behaves expected when provided a symbol `:upper` or `:lower` argument. Matches
-    `String#camelize` behavior.
+*   Fix `ActiveSupport::EncryptedConfiguration` to be compatible with Psych 4
 
-    *Alex Ghiculescu*
+    *Stephen Sugden*
 
-*   Raises an `ArgumentError` when the first argument of `ActiveSupport::Notification.subscribe` is
-    invalid.
+*   Improve `File.atomic_write` error handling
 
-    *Vipul A M*
+*   Fix `Class#descendants` and `DescendantsTracker#descendants` compatibility with Ruby 3.1.
 
-*   `HashWithIndifferentAccess#deep_transform_keys` now returns a `HashWithIndifferentAccess` instead of a `Hash`.
+    [The native `Class#descendants` was reverted prior to Ruby 3.1 release](https://bugs.ruby-lang.org/issues/14394#note-33),
+    but `Class#subclasses` was kept, breaking the feature detection.
 
-    *Nathaniel Woodthorpe*
+    *Jean Boussier*
 
-*   consume dalli’s `cache_nils` configuration as `ActiveSupport::Cache`'s `skip_nil` when using `MemCacheStore`.
-
-    *Ritikesh G*
-
-*   add `RedisCacheStore#stats` method similar to `MemCacheStore#stats`. Calls `redis#info` internally.
-
-    *Ritikesh G*
-
-
-Please check [6-1-stable](https://github.com/rails/rails/blob/6-1-stable/activesupport/CHANGELOG.md) for previous changes.
+Please check [7-0-stable](https://github.com/rails/rails/blob/7-0-stable/activesupport/CHANGELOG.md) for previous changes.

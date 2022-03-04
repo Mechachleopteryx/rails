@@ -8,7 +8,7 @@ require "action_view/helpers/tag_helper"
 
 module ActionView
   # = Action View Asset Tag Helpers
-  module Helpers #:nodoc:
+  module Helpers # :nodoc:
     # This module provides methods for generating HTML that links views to assets such
     # as images, JavaScripts, stylesheets, and feeds. These methods do not verify
     # the assets exist before linking to them:
@@ -98,7 +98,7 @@ module ActionView
 
         sources_tags = sources.uniq.map { |source|
           href = path_to_javascript(source, path_options)
-          if preload_links_header && !options["defer"]
+          if preload_links_header && !options["defer"] && href.present? && !href.start_with?("data:")
             preload_link = "<#{href}>; rel=#{rel}; as=script"
             preload_link += "; crossorigin=#{crossorigin}" unless crossorigin.nil?
             preload_link += "; integrity=#{integrity}" unless integrity.nil?
@@ -122,12 +122,29 @@ module ActionView
         sources_tags
       end
 
-      # Returns a stylesheet link tag for the sources specified as arguments. If
-      # you don't specify an extension, <tt>.css</tt> will be appended automatically.
+      # Returns a stylesheet link tag for the sources specified as arguments.
+      #
+      # When passing paths, the <tt>.css</tt> extension is optional.
+      # If you don't specify an extension, <tt>.css</tt> will be appended automatically.
+      # If you do not want <tt>.css</tt> appended to the path,
+      # set <tt>extname: false</tt> in the options.
       # You can modify the link attributes by passing a hash as the last argument.
       #
       # If the server supports Early Hints header links for these assets will be
       # automatically pushed.
+      #
+      # ==== Options
+      #
+      # * <tt>:extname</tt>  - Append an extension to the generated URL unless the extension
+      #   already exists. This only applies for relative URLs.
+      # * <tt>:protocol</tt>  - Sets the protocol of the generated URL. This option only
+      #   applies when a relative URL and +host+ options are provided.
+      # * <tt>:host</tt>  - When a relative URL is provided the host is added to the
+      #   that path.
+      # * <tt>:skip_pipeline</tt>  - This option is used to bypass the asset pipeline
+      #   when it is set to true.
+      #
+      # ==== Examples
       #
       #   stylesheet_link_tag "style"
       #   # => <link href="/assets/style.css" rel="stylesheet" />
@@ -137,6 +154,9 @@ module ActionView
       #
       #   stylesheet_link_tag "http://www.example.com/style.css"
       #   # => <link href="http://www.example.com/style.css" rel="stylesheet" />
+      #
+      #   stylesheet_link_tag "style.less", extname: false, skip_pipeline: true, rel: "stylesheet/less"
+      #   # => <link href="/stylesheets/style.less" rel="stylesheet/less">
       #
       #   stylesheet_link_tag "style", media: "all"
       #   # => <link href="/assets/style.css" media="all" rel="stylesheet" />
@@ -149,7 +169,7 @@ module ActionView
       #   #    <link href="/css/stylish.css" rel="stylesheet" />
       def stylesheet_link_tag(*sources)
         options = sources.extract_options!.stringify_keys
-        path_options = options.extract!("protocol", "host", "skip_pipeline").symbolize_keys
+        path_options = options.extract!("protocol", "extname", "host", "skip_pipeline").symbolize_keys
         preload_links = []
         crossorigin = options.delete("crossorigin")
         crossorigin = "anonymous" if crossorigin == true
@@ -158,7 +178,7 @@ module ActionView
 
         sources_tags = sources.uniq.map { |source|
           href = path_to_stylesheet(source, path_options)
-          if preload_links_header
+          if preload_links_header && href.present? && !href.start_with?("data:")
             preload_link = "<#{href}>; rel=preload; as=style"
             preload_link += "; crossorigin=#{crossorigin}" unless crossorigin.nil?
             preload_link += "; integrity=#{integrity}" unless integrity.nil?
@@ -238,14 +258,14 @@ module ActionView
       #
       # The helper gets the name of the favicon file as first argument, which
       # defaults to "favicon.ico", and also supports +:rel+ and +:type+ options
-      # to override their defaults, "shortcut icon" and "image/x-icon"
+      # to override their defaults, "icon" and "image/x-icon"
       # respectively:
       #
       #   favicon_link_tag
-      #   # => <link href="/assets/favicon.ico" rel="shortcut icon" type="image/x-icon" />
+      #   # => <link href="/assets/favicon.ico" rel="icon" type="image/x-icon" />
       #
       #   favicon_link_tag 'myicon.ico'
-      #   # => <link href="/assets/myicon.ico" rel="shortcut icon" type="image/x-icon" />
+      #   # => <link href="/assets/myicon.ico" rel="icon" type="image/x-icon" />
       #
       # Mobile Safari looks for a different link tag, pointing to an image that
       # will be used if you add the page to the home screen of an iOS device.
@@ -255,7 +275,7 @@ module ActionView
       #   # => <link href="/assets/mb-icon.png" rel="apple-touch-icon" type="image/png" />
       def favicon_link_tag(source = "favicon.ico", options = {})
         tag("link", {
-          rel: "shortcut icon",
+          rel: "icon",
           type: "image/x-icon",
           href: path_to_image(source, skip_pipeline: options.delete(:skip_pipeline))
         }.merge!(options.symbolize_keys))
@@ -297,7 +317,7 @@ module ActionView
       #   # => <link rel="preload" href="/media/audio.ogg" as="audio" type="audio/ogg" />
       #
       def preload_link_tag(source, options = {})
-        href = asset_path(source, skip_pipeline: options.delete(:skip_pipeline))
+        href = path_to_asset(source, skip_pipeline: options.delete(:skip_pipeline))
         extname = File.extname(source).downcase.delete(".")
         mime_type = options.delete(:type) || Template::Types[extname]&.to_s
         as_type = options.delete(:as) || resolve_link_as(extname, mime_type)
@@ -305,16 +325,17 @@ module ActionView
         crossorigin = "anonymous" if crossorigin == true || (crossorigin.blank? && as_type == "font")
         integrity = options[:integrity]
         nopush = options.delete(:nopush) || false
+        rel = mime_type == "module" ? "modulepreload" : "preload"
 
         link_tag = tag.link(**{
-          rel: "preload",
+          rel: rel,
           href: href,
           as: as_type,
           type: mime_type,
           crossorigin: crossorigin
         }.merge!(options.symbolize_keys))
 
-        preload_link = "<#{href}>; rel=preload; as=#{as_type}"
+        preload_link = "<#{href}>; rel=#{rel}; as=#{as_type}"
         preload_link += "; type=#{mime_type}" if mime_type
         preload_link += "; crossorigin=#{crossorigin}" if crossorigin
         preload_link += "; integrity=#{integrity}" if integrity
@@ -510,24 +531,53 @@ module ActionView
         end
 
         def resolve_link_as(extname, mime_type)
-          if extname == "js"
-            "script"
-          elsif extname == "css"
-            "style"
-          elsif extname == "vtt"
-            "track"
-          elsif (type = mime_type.to_s.split("/")[0]) && type.in?(%w(audio video font))
-            type
+          case extname
+          when "js"  then "script"
+          when "css" then "style"
+          when "vtt" then "track"
+          else
+            mime_type.to_s.split("/").first.presence_in(%w(audio video font image))
           end
         end
 
-        def send_preload_links_header(preload_links)
+        MAX_HEADER_SIZE = 8_000 # Some HTTP client and proxies have a 8kiB header limit
+        def send_preload_links_header(preload_links, max_header_size: MAX_HEADER_SIZE)
+          return if preload_links.empty?
+          response_present = respond_to?(:response) && response
+          return if response_present && response.sending?
+
           if respond_to?(:request) && request
             request.send_early_hints("Link" => preload_links.join("\n"))
           end
 
-          if respond_to?(:response) && response
-            response.headers["Link"] = [response.headers["Link"].presence, *preload_links].compact.join(",")
+          if response_present
+            header = response.headers["Link"]
+            header = header ? header.dup : +""
+
+            # rindex count characters not bytes, but we assume non-ascii characters
+            # are rare in urls, and we have a 192 bytes margin.
+            last_line_offset = header.rindex("\n")
+            last_line_size = if last_line_offset
+              header.bytesize - last_line_offset
+            else
+              header.bytesize
+            end
+
+            preload_links.each do |link|
+              if link.bytesize + last_line_size + 1 < max_header_size
+                unless header.empty?
+                  header << ","
+                  last_line_size += 1
+                end
+              else
+                header << "\n"
+                last_line_size = 0
+              end
+              header << link
+              last_line_size += link.bytesize
+            end
+
+            response.headers["Link"] = header
           end
         end
     end

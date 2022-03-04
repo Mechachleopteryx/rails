@@ -12,7 +12,7 @@ class Time
     # Returns the TimeZone for the current request, if this has been set (via Time.zone=).
     # If <tt>Time.zone</tt> has not been set for the current request, returns the TimeZone specified in <tt>config.time_zone</tt>.
     def zone
-      Thread.current[:time_zone] || zone_default
+      ::ActiveSupport::IsolatedExecutionState[:time_zone] || zone_default
     end
 
     # Sets <tt>Time.zone</tt> to a TimeZone object for the current request/thread.
@@ -39,7 +39,7 @@ class Time
     #     end
     #   end
     def zone=(time_zone)
-      Thread.current[:time_zone] = find_zone!(time_zone)
+      ::ActiveSupport::IsolatedExecutionState[:time_zone] = find_zone!(time_zone)
     end
 
     # Allows override of <tt>Time.zone</tt> locally inside supplied block;
@@ -55,7 +55,7 @@ class Time
     #     end
     #   end
     #
-    # NOTE: This won't affect any <tt>ActiveSupport::TimeWithZone</tt>
+    # NOTE: This won't affect any ActiveSupport::TimeWithZone
     # objects that have already been created, e.g. any model timestamp
     # attributes that have been read before the block will remain in
     # the application's default timezone.
@@ -80,24 +80,9 @@ class Time
     #   Time.find_zone! false              # => false
     #   Time.find_zone! "NOT-A-TIMEZONE"   # => ArgumentError: Invalid Timezone: NOT-A-TIMEZONE
     def find_zone!(time_zone)
-      if !time_zone || time_zone.is_a?(ActiveSupport::TimeZone)
-        time_zone
-      else
-        # Look up the timezone based on the identifier (unless we've been
-        # passed a TZInfo::Timezone)
-        unless time_zone.respond_to?(:period_for_local)
-          time_zone = ActiveSupport::TimeZone[time_zone] || TZInfo::Timezone.get(time_zone)
-        end
+      return time_zone unless time_zone
 
-        # Return if a TimeZone instance, or wrap in a TimeZone instance if a TZInfo::Timezone
-        if time_zone.is_a?(ActiveSupport::TimeZone)
-          time_zone
-        else
-          ActiveSupport::TimeZone.create(time_zone.name, nil, time_zone)
-        end
-      end
-    rescue TZInfo::InvalidTimezoneIdentifier
-      raise ArgumentError, "Invalid Timezone: #{time_zone}"
+      ActiveSupport::TimeZone[time_zone] || raise(ArgumentError, "Invalid Timezone: #{time_zone}")
     end
 
     # Returns a TimeZone instance matching the time zone provided.

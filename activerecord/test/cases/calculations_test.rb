@@ -12,6 +12,7 @@ require "models/author"
 require "models/topic"
 require "models/reply"
 require "models/numeric_data"
+require "models/need_quoting"
 require "models/minivan"
 require "models/speedometer"
 require "models/ship_part"
@@ -159,36 +160,24 @@ class CalculationsTest < ActiveRecord::TestCase
     assert_equal expected, accounts.merge!(accounts).uniq!(:group).sum(:credit_limit)
 
     expected = {
-      [nil, nil] => 50,
-      [1, 1] => 50,
-      [2, 2] => 60,
-      [6, 6] => 55,
-      [9, 9] => 53
+      nil => 50,
+      1 => 50,
+      2 => 60,
+      6 => 55,
+      9 => 53
     }
-    message = <<-MSG.squish
-      `maximum` with group by duplicated fields does no longer affect to result in Rails 7.0.
-      To migrate to Rails 7.0's behavior, use `uniq!(:group)` to deduplicate group fields
-      (`accounts.uniq!(:group).maximum(:credit_limit)`).
-    MSG
-    assert_deprecated(message) do
-      assert_equal expected, accounts.merge!(accounts).maximum(:credit_limit)
-    end
+
+    assert_equal expected, accounts.merge!(accounts).maximum(:credit_limit)
 
     expected = {
-      [nil, nil, nil, nil] => 50,
-      [1, 1, 1, 1] => 50,
-      [2, 2, 2, 2] => 60,
-      [6, 6, 6, 6] => 50,
-      [9, 9, 9, 9] => 53
+      nil => 50,
+      1 => 50,
+      2 => 60,
+      6 => 50,
+      9 => 53
     }
-    message = <<-MSG.squish
-      `minimum` with group by duplicated fields does no longer affect to result in Rails 7.0.
-      To migrate to Rails 7.0's behavior, use `uniq!(:group)` to deduplicate group fields
-      (`accounts.uniq!(:group).minimum(:credit_limit)`).
-    MSG
-    assert_deprecated(message) do
-      assert_equal expected, accounts.merge!(accounts).minimum(:credit_limit)
-    end
+
+    assert_equal expected, accounts.merge!(accounts).minimum(:credit_limit)
   end
 
   def test_should_generate_valid_sql_with_joins_and_group
@@ -503,7 +492,15 @@ class CalculationsTest < ActiveRecord::TestCase
   end
 
   def test_should_not_overshadow_enumerable_sum
+    some_companies = companies(:rails_core).companies.order(:id)
+
     assert_equal 6, [1, 2, 3].sum(&:abs)
+    assert_equal 15, some_companies.sum(&:id)
+    assert_equal 25, some_companies.sum(10, &:id)
+    assert_deprecated do
+      assert_equal "LeetsoftJadedpixel", some_companies.sum(&:name)
+    end
+    assert_equal "companies: LeetsoftJadedpixel", some_companies.sum("companies: ", &:name)
   end
 
   def test_should_sum_scoped_field
@@ -961,9 +958,9 @@ class CalculationsTest < ActiveRecord::TestCase
   end
 
   def test_pluck_replaces_select_clause
-    taks_relation = Topic.select(:approved, :id).order(:id)
-    assert_equal [1, 2, 3, 4, 5], taks_relation.pluck(:id)
-    assert_equal [false, true, true, true, true], taks_relation.pluck(:approved)
+    takes_relation = Topic.select(:approved, :id).order(:id)
+    assert_equal [1, 2, 3, 4, 5], takes_relation.pluck(:id)
+    assert_equal [false, true, true, true, true], takes_relation.pluck(:approved)
   end
 
   def test_pluck_columns_with_same_name
@@ -1194,6 +1191,8 @@ class CalculationsTest < ActiveRecord::TestCase
   end
 
   def assert_minimum_and_maximum_on_time_attributes(time_class)
+    skip unless supports_datetime_with_precision? # Remove once MySQL 5.5 support is dropped.
+
     actual = Topic.minimum(:written_on)
     assert_equal Time.utc(2003, 7, 16, 14, 28, 11, 223300), actual
     assert_instance_of time_class, actual
@@ -1341,12 +1340,6 @@ class CalculationsTest < ActiveRecord::TestCase
     end
   end
 
-  def test_sum_with_block_and_column_name_raises_an_error
-    assert_raises(ArgumentError) do
-      Account.sum(:firm_id) { 1 }
-    end
-  end
-
   test "#skip_query_cache! for #pluck" do
     Account.cache do
       assert_queries(1) do
@@ -1386,6 +1379,12 @@ class CalculationsTest < ActiveRecord::TestCase
         Account.all.skip_query_cache!.group(:firm_id).calculate(:sum, :credit_limit)
         Account.all.skip_query_cache!.group(:firm_id).calculate(:sum, :credit_limit)
       end
+    end
+  end
+
+  test "group alias is properly quoted" do
+    assert_nothing_raised do
+      NeedQuoting.group(:name).count
     end
   end
 end

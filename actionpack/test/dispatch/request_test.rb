@@ -23,8 +23,9 @@ class BaseRequestTest < ActiveSupport::TestCase
   private
     def stub_request(env = {})
       ip_spoofing_check = env.key?(:ip_spoofing_check) ? env.delete(:ip_spoofing_check) : true
-      @trusted_proxies ||= nil
-      ip_app = ActionDispatch::RemoteIp.new(Proc.new { }, ip_spoofing_check, @trusted_proxies)
+      @additional_trusted_proxy ||= nil
+      trusted_proxies = ActionDispatch::RemoteIp::TRUSTED_PROXIES + [@additional_trusted_proxy]
+      ip_app = ActionDispatch::RemoteIp.new(Proc.new { }, ip_spoofing_check, trusted_proxies)
       ActionDispatch::Http::URL.tld_length = env.delete(:tld_length) if env.key?(:tld_length)
 
       ip_app.call(env)
@@ -40,9 +41,6 @@ class RequestUrlFor < BaseRequestTest
     assert_match(/Please provide the :host parameter/, e.message)
 
     assert_equal "/books", url_for(only_path: true, path: "/books")
-
-    assert_equal "http://www.example.com/books/?q=code", url_for(trailing_slash: true, path: "/books?q=code")
-    assert_equal "http://www.example.com/books/?spareslashes=////", url_for(trailing_slash: true, path: "/books?spareslashes=////")
 
     assert_equal "http://www.example.com",  url_for
     assert_equal "http://api.example.com",  url_for(subdomain: "api")
@@ -199,7 +197,7 @@ class RequestIP < BaseRequestTest
   end
 
   test "remote ip with user specified trusted proxies String" do
-    @trusted_proxies = "67.205.106.73"
+    @additional_trusted_proxy = "67.205.106.73"
 
     request = stub_request "REMOTE_ADDR" => "3.4.5.6",
                            "HTTP_X_FORWARDED_FOR" => "67.205.106.73"
@@ -221,7 +219,7 @@ class RequestIP < BaseRequestTest
   end
 
   test "remote ip v6 with user specified trusted proxies String" do
-    @trusted_proxies = "fe80:0000:0000:0000:0202:b3ff:fe1e:8329"
+    @additional_trusted_proxy = "fe80:0000:0000:0000:0202:b3ff:fe1e:8329"
 
     request = stub_request "REMOTE_ADDR" => "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
                            "HTTP_X_FORWARDED_FOR" => "fe80:0000:0000:0000:0202:b3ff:fe1e:8329"
@@ -243,7 +241,7 @@ class RequestIP < BaseRequestTest
   end
 
   test "remote ip with user specified trusted proxies Regexp" do
-    @trusted_proxies = /^67\.205\.106\.73$/i
+    @additional_trusted_proxy = /^67\.205\.106\.73$/i
 
     request = stub_request "REMOTE_ADDR" => "67.205.106.73",
                            "HTTP_X_FORWARDED_FOR" => "3.4.5.6"
@@ -254,7 +252,7 @@ class RequestIP < BaseRequestTest
   end
 
   test "remote ip v6 with user specified trusted proxies Regexp" do
-    @trusted_proxies = /^fe80:0000:0000:0000:0202:b3ff:fe1e:8329$/i
+    @additional_trusted_proxy = /^fe80:0000:0000:0000:0202:b3ff:fe1e:8329$/i
 
     request = stub_request "REMOTE_ADDR" => "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
                            "HTTP_X_FORWARDED_FOR" => "fe80:0000:0000:0000:0202:b3ff:fe1e:8329"
@@ -596,7 +594,7 @@ class RequestCookie < BaseRequestTest
 end
 
 class RequestParamsParsing < BaseRequestTest
-  test "doesnt break when content type has charset" do
+  test "doesn't break when content type has charset" do
     request = stub_request(
       "REQUEST_METHOD" => "POST",
       "CONTENT_LENGTH" => "flamenco=love".length,
@@ -607,7 +605,7 @@ class RequestParamsParsing < BaseRequestTest
     assert_equal({ "flamenco" => "love" }, request.request_parameters)
   end
 
-  test "doesnt interpret request uri as query string when missing" do
+  test "doesn't interpret request uri as query string when missing" do
     request = stub_request("REQUEST_URI" => "foo")
     assert_equal({}, request.query_parameters)
   end
@@ -910,7 +908,7 @@ class RequestFormat < BaseRequestTest
 
       assert_equal [ Mime[:html] ], request.formats
 
-      request = stub_request "HTTP_ACCEPT" => "koz-asked/something-crazy",
+      request = stub_request "HTTP_ACCEPT" => "koz-asked/something-wild",
                              "QUERY_STRING" => ""
 
       assert_equal [ Mime[:html] ], request.formats
@@ -1378,5 +1376,19 @@ class RequestInspectTest < BaseRequestTest
       "QUERY_STRING" => "q=1"
     )
     assert_match %r(#<ActionDispatch::Request POST "https://example.com/path/\?q=1" for 1.2.3.4>), request.inspect
+  end
+end
+
+class RequestSession < BaseRequestTest
+  def setup
+    super
+    @request = stub_request
+  end
+
+  test "#session" do
+    @request.session
+
+    assert_not_predicate(ActionDispatch::Request::Session.find(@request), :enabled?)
+    assert_instance_of(ActionDispatch::Request::Session::Options, ActionDispatch::Request::Session::Options.find(@request))
   end
 end

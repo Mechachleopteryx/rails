@@ -3,9 +3,10 @@
 module ActiveRecord
   module Associations
     class Preloader
-      class Batch #:nodoc:
-        def initialize(preloaders)
+      class Batch # :nodoc:
+        def initialize(preloaders, available_records:)
           @preloaders = preloaders.reject(&:empty?)
+          @available_records = available_records.flatten.group_by { |r| r.class.base_class }
         end
 
         def call
@@ -13,11 +14,19 @@ module ActiveRecord
           until branches.empty?
             loaders = branches.flat_map(&:runnable_loaders)
 
-            already_loaded, loaders = loaders.partition(&:already_loaded?)
-            already_loaded.each(&:run)
+            loaders.each { |loader| loader.associate_records_from_unscoped(@available_records[loader.klass.base_class]) }
 
-            group_and_load_similar(loaders)
-            loaders.each(&:run)
+            if loaders.any?
+              future_tables = branches.flat_map do |branch|
+                branch.future_classes - branch.runnable_loaders.map(&:klass)
+              end.map(&:table_name).uniq
+
+              target_loaders = loaders.reject { |l| future_tables.include?(l.table_name)  }
+              target_loaders = loaders if target_loaders.empty?
+
+              group_and_load_similar(target_loaders)
+              target_loaders.each(&:run)
+            end
 
             finished, in_progress = branches.partition(&:done?)
 

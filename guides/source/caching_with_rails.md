@@ -9,7 +9,7 @@ Caching means to store content generated during the request-response cycle and
 to reuse it when responding to similar requests.
 
 Caching is often the most effective way to boost an application's performance.
-Through caching, web sites running on a single server with a single database
+Through caching, websites running on a single server with a single database
 can sustain a load of thousands of concurrent users.
 
 Rails provides a set of caching features out of the box. This guide will teach
@@ -36,12 +36,14 @@ page and action caching you will need to add `actionpack-page_caching` and
 
 By default, caching is only enabled in your production environment. You can play
 around with caching locally by running `rails dev:cache`, or by setting
-`config.action_controller.perform_caching` to `true` in `config/environments/development.rb`.
+[`config.action_controller.perform_caching`][] to `true` in `config/environments/development.rb`.
 
 NOTE: Changing the value of `config.action_controller.perform_caching` will
 only have an effect on the caching provided by Action Controller.
 For instance, it will not impact low-level caching, that we address
 [below](#low-level-caching).
+
+[`config.action_controller.perform_caching`]: configuring.html#config-action-controller-perform-caching
 
 ### Page Caching
 
@@ -292,7 +294,32 @@ class Product < ApplicationRecord
 end
 ```
 
-NOTE: Notice that in this example we used the `cache_key_with_version` method, so the resulting cache key will be something like `products/233-20140225082222765838000/competing_price`. `cache_key_with_version` generates a string based on the model's class name, `id`, and `updated_at` attributes. This is a common convention and has the benefit of invalidating the cache whenever the product is updated. In general, when you use low-level caching for instance level information, you need to generate a cache key.
+NOTE: Notice that in this example we used the `cache_key_with_version` method, so the resulting cache key will be something like `products/233-20140225082222765838000/competing_price`. `cache_key_with_version` generates a string based on the model's class name, `id`, and `updated_at` attributes. This is a common convention and has the benefit of invalidating the cache whenever the product is updated. In general, when you use low-level caching, you need to generate a cache key.
+
+#### Avoid caching instances of Active Record objects
+
+Consider this example, which stores a list of Active Record objects representing superusers in the cache:
+
+```ruby
+# super_admins is an expensive SQL query, so don't run it too often
+Rails.cache.fetch("super_admin_users", expires_in: 12.hours) do
+  User.super_admins.to_a
+end
+```
+
+You should __avoid__ this pattern. Why? Because the instance could change. In production, attributes
+on it could differ, or the record could be deleted. And in development, it works unreliably with
+cache stores that reload code when you make changes.
+
+Instead, cache the ID or some other primitive data type. For example:
+
+```ruby
+# super_admins is an expensive SQL query, so don't run it too often
+ids = Rails.cache.fetch("super_admin_user_ids", expires_in: 12.hours) do
+  User.super_admins.pluck(:id)
+end
+User.where(id: ids).to_a
+```
 
 ### SQL Caching
 
@@ -324,7 +351,7 @@ The second time the same query is run against the database, it's not actually go
 However, it's important to note that query caches are created at the start of
 an action and destroyed at the end of that action and thus persist only for the
 duration of the action. If you'd like to store query results in a more
-persistent fashion, you can with low level caching.
+persistent fashion, you can with low-level caching.
 
 Cache Stores
 ------------
@@ -363,6 +390,8 @@ There are some common options that can be used by all cache implementations. The
 * `:expires_in` - This option sets an expiration time in seconds for the cache entry, if the cache store supports it, when it will be automatically removed from the cache.
 
 * `:race_condition_ttl` - This option is used in conjunction with the `:expires_in` option. It will prevent race conditions when cache entries expire by preventing multiple processes from simultaneously regenerating the same entry (also known as the dog pile effect). This option sets the number of seconds that an expired entry can be reused while a new value is being regenerated. It's a good practice to set this value if you use the `:expires_in` option.
+
+* `:coder` - This option allows to replace the default cache entry serialization mechanism by a custom one. The `coder` must respond to `dump` and `load`, and passing a custom coder disable automatic compression.
 
 #### Connection Pool Options
 
@@ -570,7 +599,7 @@ Conditional GET support
 
 Conditional GETs are a feature of the HTTP specification that provide a way for web servers to tell browsers that the response to a GET request hasn't changed since the last request and can be safely pulled from the browser cache.
 
-They work by using the `HTTP_IF_NONE_MATCH` and `HTTP_IF_MODIFIED_SINCE` headers to pass back and forth both a unique content identifier and the timestamp of when the content was last changed. If the browser makes a request where the content identifier (etag) or last modified since timestamp matches the server's version then the server only needs to send back an empty response with a not modified status.
+They work by using the `HTTP_IF_NONE_MATCH` and `HTTP_IF_MODIFIED_SINCE` headers to pass back and forth both a unique content identifier and the timestamp of when the content was last changed. If the browser makes a request where the content identifier (ETag) or last modified since timestamp matches the server's version then the server only needs to send back an empty response with a not modified status.
 
 It is the server's (i.e. our) responsibility to look for a last modified timestamp and the if-none-match header and determine whether or not to send back the full response. With conditional-get support in Rails this is a pretty easy task:
 

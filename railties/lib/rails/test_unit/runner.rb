@@ -43,12 +43,7 @@ module Rails
         end
 
         def load_tests(argv)
-          patterns = extract_filters(argv)
-
-          tests = Rake::FileList[patterns.any? ? patterns : default_test_glob]
-          tests.exclude(default_test_exclude_glob) if patterns.empty?
-          # Disable parallel testing if there's only one test file to run.
-          ActiveSupport.disable_test_parallelization! if tests.size <= 1
+          tests = list_tests(argv)
           tests.to_a.each { |path| require File.expand_path(path) }
         end
 
@@ -63,7 +58,9 @@ module Rails
         private
           def extract_filters(argv)
             # Extract absolute and relative paths but skip -n /.*/ regexp filters.
-            argv.select { |arg| path_argument?(arg) && !regexp_filter?(arg) }.map do |path|
+            argv.filter_map do |path|
+              next unless path_argument?(path) && !regexp_filter?(path)
+
               path = path.tr("\\", "/")
               case
               when /(:\d+)+$/.match?(path)
@@ -93,6 +90,14 @@ module Rails
 
           def path_argument?(arg)
             %r"^[/\\]?\w+[/\\]".match?(arg)
+          end
+
+          def list_tests(argv)
+            patterns = extract_filters(argv)
+
+            tests = Rake::FileList[patterns.any? ? patterns : default_test_glob]
+            tests.exclude(default_test_exclude_glob) if patterns.empty?
+            tests
           end
       end
     end

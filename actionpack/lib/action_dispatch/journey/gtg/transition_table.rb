@@ -11,7 +11,7 @@ module ActionDispatch
         attr_reader :memos
 
         DEFAULT_EXP = /[^.\/?]+/
-        DEFAULT_EXP_ANCHORED = Regexp.new(/\A#{DEFAULT_EXP}\Z/)
+        DEFAULT_EXP_ANCHORED = /\A#{DEFAULT_EXP}\Z/
 
         def initialize
           @stdparam_states = {}
@@ -130,7 +130,7 @@ module ActionDispatch
           states    = "function tt() { return #{to_json}; }"
 
           fun_routes = paths.sample(3).map do |ast|
-            ast.map { |n|
+            ast.filter_map { |n|
               case n
               when Nodes::Symbol
                 case n.left
@@ -143,7 +143,7 @@ module ActionDispatch
               else
                 nil
               end
-            }.compact.join
+            }.join
           end
 
           stylesheets = [fsm_css]
@@ -165,7 +165,11 @@ module ActionDispatch
           case sym
           when Regexp
             # we must match the whole string to a token boundary
-            sym = Regexp.new(/\A#{sym}\Z/)
+            if sym == DEFAULT_EXP
+              sym = DEFAULT_EXP_ANCHORED
+            else
+              sym = /\A#{sym}\Z/
+            end
           when Symbol
             # account for symbols in the constraints the same as strings
             sym = sym.to_s

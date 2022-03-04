@@ -40,7 +40,7 @@ module ActiveRecord
     # but the Book model connects to a separate database called "library_db"
     # (this can even be a database on a different machine).
     #
-    # Book, ScaryBook and GoodBook will all use the same connection pool to
+    # Book, ScaryBook, and GoodBook will all use the same connection pool to
     # "library_db" while Author, BankAccount, and any other models you create
     # will use the default connection pool to "my_application".
     #
@@ -56,6 +56,22 @@ module ActiveRecord
       FINALIZER = lambda { |_| ActiveSupport::ForkTracker.check! }
       private_constant :FINALIZER
 
+      class StringConnectionOwner # :nodoc:
+        attr_reader :name
+
+        def initialize(name)
+          @name = name
+        end
+
+        def primary_class?
+          false
+        end
+
+        def current_preventing_writes
+          false
+        end
+      end
+
       def initialize
         # These caches are keyed by pool_config.connection_specification_name (PoolConfig#connection_specification_name).
         @owner_to_pool_manager = Concurrent::Map.new(initial_capacity: 2)
@@ -65,11 +81,11 @@ module ActiveRecord
       end
 
       def prevent_writes # :nodoc:
-        Thread.current[:prevent_writes]
+        ActiveSupport::IsolatedExecutionState[:active_record_prevent_writes]
       end
 
       def prevent_writes=(prevent_writes) # :nodoc:
-        Thread.current[:prevent_writes] = prevent_writes
+        ActiveSupport::IsolatedExecutionState[:active_record_prevent_writes] = prevent_writes
       end
 
       # Prevent writing to the database regardless of role.
@@ -84,7 +100,7 @@ module ActiveRecord
       # See +READ_QUERY+ for the queries that are blocked by this
       # method.
       def while_preventing_writes(enabled = true)
-        unless ActiveRecord::Base.legacy_connection_handling
+        unless ActiveRecord.legacy_connection_handling
           raise NotImplementedError, "`while_preventing_writes` is only available on the connection_handler with legacy_connection_handling"
         end
 
@@ -108,9 +124,9 @@ module ActiveRecord
       alias :connection_pools :connection_pool_list
 
       def establish_connection(config, owner_name: Base, role: ActiveRecord::Base.current_role, shard: Base.current_shard)
-        owner_name = config.to_s if config.is_a?(Symbol)
+        owner_name = StringConnectionOwner.new(config.to_s) if config.is_a?(Symbol)
 
-        pool_config = resolve_pool_config(config, owner_name)
+        pool_config = resolve_pool_config(config, owner_name, role, shard)
         db_config = pool_config.db_config
 
         # Protects the connection named `ActiveRecord::Base` from being removed
@@ -127,7 +143,7 @@ module ActiveRecord
           payload[:config] = db_config.configuration_hash
         end
 
-        if ActiveRecord::Base.legacy_connection_handling
+        if ActiveRecord.legacy_connection_handling
           owner_to_pool_manager[pool_config.connection_specification_name] ||= LegacyPoolManager.new
         else
           owner_to_pool_manager[pool_config.connection_specification_name] ||= PoolManager.new
@@ -202,15 +218,6 @@ module ActiveRecord
         pool && pool.connected?
       end
 
-      # Remove the connection for this class. This will close the active
-      # connection and the defined connection (if they exist). The result
-      # can be used as an argument for #establish_connection, for easily
-      # re-establishing the connection.
-      def remove_connection(owner, role: ActiveRecord::Base.current_role, shard: ActiveRecord::Base.current_shard)
-        remove_connection_pool(owner, role: role, shard: shard)&.configuration_hash
-      end
-      deprecate remove_connection: "Use #remove_connection_pool, which now returns a DatabaseConfig object instead of a Hash"
-
       def remove_connection_pool(owner, role: ActiveRecord::Base.current_role, shard: ActiveRecord::Base.current_shard)
         if pool_manager = get_pool_manager(owner)
           pool_config = pool_manager.remove_pool_config(role, shard)
@@ -234,19 +241,8 @@ module ActiveRecord
         attr_reader :owner_to_pool_manager
 
         # Returns the pool manager for an owner.
-        #
-        # Using `"primary"` to look up the pool manager for `ActiveRecord::Base` is
-        # deprecated in favor of looking it up by `"ActiveRecord::Base"`.
-        #
-        # During the deprecation period, if `"primary"` is passed, the pool manager
-        # for `ActiveRecord::Base` will still be returned.
         def get_pool_manager(owner)
-          return owner_to_pool_manager[owner] if owner_to_pool_manager.key?(owner)
-
-          if owner == "primary"
-            ActiveSupport::Deprecation.warn("Using `\"primary\"` as a `connection_specification_name` is deprecated and will be removed in Rails 7.0.0. Please use `ActiveRecord::Base`.")
-            owner_to_pool_manager[Base.name]
-          end
+          owner_to_pool_manager[owner]
         end
 
         # Returns an instance of PoolConfig for a given adapter.
@@ -259,7 +255,7 @@ module ActiveRecord
         #   pool_config.db_config.configuration_hash
         #   # => { host: "localhost", database: "foo", adapter: "sqlite3" }
         #
-        def resolve_pool_config(config, owner_name)
+        def resolve_pool_config(config, owner_name, role, shard)
           db_config = Base.configurations.resolve(config)
 
           raise(AdapterNotSpecified, "database configuration does not specify adapter") unless db_config.adapter
@@ -289,7 +285,7 @@ module ActiveRecord
             raise AdapterNotFound, "database configuration specifies nonexistent #{db_config.adapter} adapter"
           end
 
-          ConnectionAdapters::PoolConfig.new(owner_name, db_config)
+          ConnectionAdapters::PoolConfig.new(owner_name, db_config, role, shard)
         end
     end
   end

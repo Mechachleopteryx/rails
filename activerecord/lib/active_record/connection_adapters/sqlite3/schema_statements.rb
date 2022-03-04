@@ -6,7 +6,7 @@ module ActiveRecord
       module SchemaStatements # :nodoc:
         # Returns an array of indexes for the given table.
         def indexes(table_name)
-          exec_query("PRAGMA index_list(#{quote_table_name(table_name)})", "SCHEMA").map do |row|
+          exec_query("PRAGMA index_list(#{quote_table_name(table_name)})", "SCHEMA").filter_map do |row|
             # Indexes SQLite creates implicitly for internal use start with "sqlite_".
             # See https://www.sqlite.org/fileformat2.html#intschema
             next if row["name"].start_with?("sqlite_")
@@ -49,7 +49,7 @@ module ActiveRecord
               where: where,
               orders: orders
             )
-          end.compact
+          end
         end
 
         def add_foreign_key(from_table, to_table, **options)
@@ -60,6 +60,8 @@ module ActiveRecord
         end
 
         def remove_foreign_key(from_table, to_table = nil, **options)
+          return if options[:if_exists] == true && !foreign_key_exists?(from_table, to_table)
+
           to_table ||= options[:to_table]
           options = options.except(:name, :to_table, :validate)
           foreign_keys = foreign_keys(from_table)
@@ -125,20 +127,20 @@ module ActiveRecord
           end
 
           def new_column_from_field(table_name, field)
-            default = \
-              case field["dflt_value"]
-              when /^null$/i
-                nil
-              when /^'(.*)'$/m
-                $1.gsub("''", "'")
-              when /^"(.*)"$/m
-                $1.gsub('""', '"')
-              else
-                field["dflt_value"]
-              end
+            default = field["dflt_value"]
 
             type_metadata = fetch_type_metadata(field["type"])
-            Column.new(field["name"], default, type_metadata, field["notnull"].to_i == 0, collation: field["collation"])
+            default_value = extract_value_from_default(default)
+            default_function = extract_default_function(default_value, default)
+
+            Column.new(
+              field["name"],
+              default_value,
+              type_metadata,
+              field["notnull"].to_i == 0,
+              default_function,
+              collation: field["collation"]
+            )
           end
 
           def data_source_sql(name = nil, type: nil)

@@ -7,8 +7,10 @@ rescue LoadError => e
   raise e
 end
 
+require "delegate"
 require "active_support/core_ext/enumerable"
 require "active_support/core_ext/array/extract_options"
+require "active_support/core_ext/numeric/time"
 
 module ActiveSupport
   module Cache
@@ -25,29 +27,52 @@ module ActiveSupport
     # MemCacheStore implements the Strategy::LocalCache strategy which implements
     # an in-memory cache inside of a block.
     class MemCacheStore < Store
-      DEFAULT_CODER = NullCoder # Dalli automatically Marshal values
-
-      # Provide support for raw values in the local cache strategy.
-      module LocalCacheWithRaw # :nodoc:
-        private
-          def write_entry(key, entry, **options)
-            if options[:raw] && local_cache
-              raw_entry = Entry.new(entry.value.to_s)
-              raw_entry.expires_at = entry.expires_at
-              super(key, raw_entry, **options)
-            else
-              super
-            end
-          end
-      end
-
       # Advertise cache versioning support.
       def self.supports_cache_versioning?
         true
       end
 
       prepend Strategy::LocalCache
-      prepend LocalCacheWithRaw
+
+      module DupLocalCache
+        class DupLocalStore < DelegateClass(Strategy::LocalCache::LocalStore)
+          def write_entry(_key, entry)
+            if entry.is_a?(Entry)
+              entry.dup_value!
+            end
+            super
+          end
+
+          def fetch_entry(key)
+            entry = super do
+              new_entry = yield
+              if entry.is_a?(Entry)
+                new_entry.dup_value!
+              end
+              new_entry
+            end
+            entry = entry.dup
+
+            if entry.is_a?(Entry)
+              entry.dup_value!
+            end
+
+            entry
+          end
+        end
+
+        private
+          def local_cache
+            if ActiveSupport::Cache.format_version == 6.1
+              if local_cache = super
+                DupLocalStore.new(local_cache)
+              end
+            else
+              super
+            end
+          end
+      end
+      prepend DupLocalCache
 
       ESCAPE_KEY_CHARS = /[\x00-\x20%\x7F-\xFF]/n
 
@@ -80,7 +105,7 @@ module ActiveSupport
       #
       #   ActiveSupport::Cache::MemCacheStore.new("localhost", "server-downstairs.localnetwork:8229")
       #
-      # If no addresses are provided, but ENV['MEMCACHE_SERVERS'] is defined, it will be used instead. Otherwise,
+      # If no addresses are provided, but <tt>ENV['MEMCACHE_SERVERS']</tt> is defined, it will be used instead. Otherwise,
       # MemCacheStore will connect to localhost:11211 (the default memcached port).
       def initialize(*addresses)
         addresses = addresses.flatten
@@ -97,14 +122,16 @@ module ActiveSupport
           @data = addresses.first
         else
           mem_cache_options = options.dup
-          UNIVERSAL_OPTIONS.each { |name| mem_cache_options.delete(name) }
+          # The value "compress: false" prevents duplicate compression within Dalli.
+          mem_cache_options[:compress] = false
+          (UNIVERSAL_OPTIONS - %i(compress)).each { |name| mem_cache_options.delete(name) }
           @data = self.class.build_mem_cache(*(addresses + [mem_cache_options]))
         end
       end
 
       # Increment a cached value. This method uses the memcached incr atomic
-      # operator and can only be used on values written with the :raw option.
-      # Calling it on a value not stored with :raw will initialize that value
+      # operator and can only be used on values written with the +:raw+ option.
+      # Calling it on a value not stored with +:raw+ will initialize that value
       # to zero.
       def increment(name, amount = 1, options = nil)
         options = merged_options(options)
@@ -116,8 +143,8 @@ module ActiveSupport
       end
 
       # Decrement a cached value. This method uses the memcached decr atomic
-      # operator and can only be used on values written with the :raw option.
-      # Calling it on a value not stored with :raw will initialize that value
+      # operator and can only be used on values written with the +:raw+ option.
+      # Calling it on a value not stored with +:raw+ will initialize that value
       # to zero.
       def decrement(name, amount = 1, options = nil)
         options = merged_options(options)
@@ -140,23 +167,81 @@ module ActiveSupport
       end
 
       private
+        module Coders # :nodoc:
+          class << self
+            def [](version)
+              case version
+              when 6.1
+                Rails61Coder
+              when 7.0
+                Rails70Coder
+              else
+                raise ArgumentError, "Unknown ActiveSupport::Cache.format_version #{Cache.format_version.inspect}"
+              end
+            end
+          end
+
+          module Loader
+            def load(payload)
+              if payload.is_a?(Entry)
+                payload
+              else
+                Cache::Coders::Loader.load(payload)
+              end
+            end
+          end
+
+          module Rails61Coder
+            include Loader
+            extend self
+
+            def dump(entry)
+              entry
+            end
+
+            def dump_compressed(entry, threshold)
+              entry.compressed(threshold)
+            end
+          end
+
+          module Rails70Coder
+            include Cache::Coders::Rails70Coder
+            include Loader
+            extend self
+          end
+        end
+
+        def default_coder
+          Coders[Cache.format_version]
+        end
+
         # Read an entry from the cache.
         def read_entry(key, **options)
-          rescue_error_with(nil) { deserialize_entry(@data.with { |c| c.get(key, options) }) }
+          deserialize_entry(read_serialized_entry(key, **options), **options)
+        end
+
+        def read_serialized_entry(key, **options)
+          rescue_error_with(nil) do
+            @data.with { |c| c.get(key, options) }
+          end
         end
 
         # Write an entry to the cache.
         def write_entry(key, entry, **options)
+          write_serialized_entry(key, serialize_entry(entry, **options), **options)
+        end
+
+        def write_serialized_entry(key, payload, **options)
           method = options[:unless_exist] ? :add : :set
-          value = options[:raw] ? entry.value.to_s : serialize_entry(entry)
           expires_in = options[:expires_in].to_i
           if options[:race_condition_ttl] && expires_in > 0 && !options[:raw]
             # Set the memcache expire a few minutes in the future to support race condition ttls on read
             expires_in += 5.minutes
           end
           rescue_error_with false do
-            # The value "compress: false" prevents duplicate compression within Dalli.
-            @data.with { |c| c.send(method, key, value, expires_in, **options, compress: false) }
+            # Don't pass compress option to Dalli since we are already dealing with compression.
+            options.delete(:compress)
+            @data.with { |c| c.send(method, key, payload, expires_in, **options) }
           end
         end
 
@@ -168,7 +253,7 @@ module ActiveSupport
           values = {}
 
           raw_values.each do |key, value|
-            entry = deserialize_entry(value)
+            entry = deserialize_entry(value, raw: options[:raw])
 
             unless entry.expired? || entry.mismatched?(normalize_version(keys_to_names[key], options))
               values[keys_to_names[key]] = entry.value
@@ -181,6 +266,14 @@ module ActiveSupport
         # Delete an entry from the cache.
         def delete_entry(key, **options)
           rescue_error_with(false) { @data.with { |c| c.delete(key) } }
+        end
+
+        def serialize_entry(entry, raw: false, **options)
+          if raw
+            entry.value.to_s
+          else
+            super(entry, raw: raw, **options)
+          end
         end
 
         # Memcache keys are binaries. So we need to force their encoding to binary
@@ -196,16 +289,19 @@ module ActiveSupport
           key
         end
 
-        def deserialize_entry(payload)
-          entry = super
-          entry = Entry.new(entry, compress: false) if entry && !entry.is_a?(Entry)
-          entry
+        def deserialize_entry(payload, raw: false, **)
+          if payload && raw
+            Entry.new(payload)
+          else
+            super(payload)
+          end
         end
 
         def rescue_error_with(fallback)
           yield
-        rescue Dalli::DalliError => e
-          logger.error("DalliError (#{e}): #{e.message}") if logger
+        rescue Dalli::DalliError => error
+          ActiveSupport.error_reporter&.report(error, handled: true, severity: :warning)
+          logger.error("DalliError (#{error}): #{error.message}") if logger
           fallback
         end
     end

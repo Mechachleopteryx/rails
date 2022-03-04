@@ -253,12 +253,25 @@ class ParametersPermitTest < ActiveSupport::TestCase
     assert_not_predicate permitted[:users].last, :permitted?
   end
 
-  test "fetch doesnt raise ParameterMissing exception if there is a default" do
+  test "grow until set rehashes" do
+    params = ActionController::Parameters.new(users: [{ id: 1 }])
+
+    permitted = params.permit(users: [:id])
+    permitted[:users] << { injected: 1 }
+    20.times { |i|
+      list = ["foo#{i}"]
+      permitted[:xx] = list
+      assert_equal permitted[:xx], list
+    }
+    assert_not_predicate permitted[:users].last, :permitted?
+  end
+
+  test "fetch doesn't raise ParameterMissing exception if there is a default" do
     assert_equal "monkey", @params.fetch(:foo, "monkey")
     assert_equal "monkey", @params.fetch(:foo) { "monkey" }
   end
 
-  test "fetch doesnt raise ParameterMissing exception if there is a default that is nil" do
+  test "fetch doesn't raise ParameterMissing exception if there is a default that is nil" do
     assert_nil @params.fetch(:foo, nil)
     assert_nil @params.fetch(:foo) { nil }
   end

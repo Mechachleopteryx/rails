@@ -79,7 +79,20 @@ module RenderTestCases
 
   def test_render_file_with_full_path_no_extension
     template_path = File.expand_path("../fixtures/test/hello_world", __dir__)
-    assert_raise(ArgumentError) { @view.render(file: template_path) }
+    e = assert_raise(ArgumentError) { @view.render(file: template_path) }
+    assert_match(/File (.+) does not exist/, e.message)
+  end
+
+  def test_render_file_with_invalid_full_path
+    template_path = File.expand_path("../fixtures/test/hello_world_invalid.erb", __dir__)
+    e = assert_raise(ArgumentError) { @view.render(file: template_path) }
+    assert_match(/File (.+) does not exist/, e.message)
+  end
+
+  def test_render_file_with_relative_path
+    template_path = "fixtures/test/hello_world.erb"
+    e = assert_raise(ArgumentError) { @view.render(file: template_path) }
+    assert_match(%r{`render file:` should be given the absolute path to a file. (.+) was given instead}, e.message)
   end
 
   # Test if :formats, :locale etc. options are passed correctly to the resolvers.
@@ -147,6 +160,10 @@ module RenderTestCases
 
   def test_render_ruby_template_inline
     assert_equal "4", @view.render(inline: "(2**2).to_s", type: :ruby)
+  end
+
+  def test_render_template_via_symbol_lookup
+    assert_equal "Hello from Ruby code", @view.render(template: :ruby_template)
   end
 
   def test_render_template_with_localization_on_context_level
@@ -331,13 +348,6 @@ module RenderTestCases
     assert_equal "Hello: davidHello: mary", @view.render(partial: "test/customer", collection: [ Customer.new("david"), Customer.new("mary") ])
   end
 
-  def test_render_partial_collection_with_partial_name_containing_dot
-    assert_deprecated do
-      assert_equal "Hello: davidHello: mary",
-        @view.render(partial: "test/customer.mobile", collection: [ Customer.new("david"), Customer.new("mary") ])
-    end
-  end
-
   def test_render_partial_collection_as_by_string
     assert_equal "david david davidmary mary mary",
       @view.render(partial: "test/customer_with_var", collection: [ Customer.new("david"), Customer.new("mary") ], as: "customer")
@@ -381,7 +391,7 @@ module RenderTestCases
   def test_without_compiled_method_container_is_deprecated
     view = ActionView::Base.with_view_paths(ActionController::Base.view_paths)
     assert_raises(NotImplementedError) do
-      assert_equal "Hello world!", view.render(template: "test/hello_world")
+      view.render(template: "test/hello_world")
     end
   end
 
@@ -630,6 +640,36 @@ module RenderTestCases
     assert_match "Missing partial /_true with", e.message
   end
 
+  def test_render_partial_provides_spellcheck
+    e = assert_raises(ActionView::MissingTemplate) { @view.render(partial: "test/partail") }
+    assert_match %r{Did you mean\?  test/partial\n *test/partialhtml}, e.message
+  end
+
+  def test_spellcheck_doesnt_list_directories
+    e = assert_raises(ActionView::MissingTemplate) { @view.render(partial: "test/directory") }
+    assert_match %r{Did you mean\?}, e.message
+    assert_no_match %r{Did you mean\?  test/directory\n}, e.message # test/hello is a directory
+  end
+
+  def test_spellcheck_only_lists_templates
+    e = assert_raises(ActionView::MissingTemplate) { @view.render(template: "test/partial") }
+
+    assert_match %r{Did you mean\?}, e.message
+    assert_no_match %r{Did you mean\?  test/partial\n}, e.message
+  end
+
+  def test_spellcheck_only_lists_partials
+    e = assert_raises(ActionView::MissingTemplate) { @view.render(partial: "test/template") }
+
+    assert_match %r{Did you mean\?}, e.message
+    assert_no_match %r{Did you mean\?  test/template\n}, e.message
+  end
+
+  def test_render_partial_wrong_details_no_spellcheck
+    e = assert_raises(ActionView::MissingTemplate) { @view.render(partial: "test/partial_with_only_html_version", formats: [:xml]) }
+    assert_no_match %r{Did you mean\?}, e.message
+  end
+
   def test_render_with_nested_layout
     assert_equal %(<title>title</title>\n\n<div id="column">column</div>\n<div id="content">content</div>\n),
       @view.render(template: "test/nested_layout", layout: "layouts/yield")
@@ -662,6 +702,35 @@ module RenderTestCases
       @view.render(TestRenderable.new)
     )
   end
+
+  def test_render_mutate_string_literal
+    assert_equal "foobar", @view.render(inline: "'foo' << 'bar'", type: :ruby)
+  end
+end
+
+class FrozenStringLiteralEnabledViewRenderTest < ActiveSupport::TestCase
+  include RenderTestCases
+
+  def setup
+    ActionView::LookupContext::DetailsKey.clear
+
+    @previous_frozen_literal = ActionView::Template.frozen_string_literal
+    ActionView::Template.frozen_string_literal = true
+    view_paths = ActionController::Base.view_paths
+    setup_view(view_paths)
+  end
+
+  def teardown
+    super
+    ActionView::Template.frozen_string_literal = @previous_frozen_literal
+  end
+
+  def test_render_mutate_string_literal
+    error = assert_raise ActionView::Template::Error do
+      @view.render(inline: "'foo' << 'bar'", type: :ruby)
+    end
+    assert_includes(error.message, "can't modify frozen String")
+  end
 end
 
 class CachedViewRenderTest < ActiveSupport::TestCase
@@ -671,7 +740,7 @@ class CachedViewRenderTest < ActiveSupport::TestCase
   def setup
     ActionView::LookupContext::DetailsKey.clear
     view_paths = ActionController::Base.view_paths
-    assert_equal ActionView::OptimizedFileSystemResolver, view_paths.first.class
+    assert_equal ActionView::FileSystemResolver, view_paths.first.class
     setup_view(view_paths)
   end
 
@@ -680,6 +749,24 @@ class CachedViewRenderTest < ActiveSupport::TestCase
     dog = @view.render(template: "test/cache_fragment_inside_render_layout_block_2")
 
     assert_not_equal cat, dog
+  end
+
+  def test_caching_predicate_method
+    result = @view.render(template: "test/caching_predicate")
+
+    assert_match "Cached!", result
+  end
+
+  def test_caching_predicate_method_outside_of_cache
+    result = @view.render(template: "test/caching_predicate_outside_cache")
+
+    assert_match "Not cached!", result
+  end
+
+  def test_uncacheable
+    e = assert_raises(ActionView::Template::Error) { @view.render(template: "test/uncacheable") }
+
+    assert_match "can't be fragment cached", e.cause.message
   end
 end
 
@@ -745,7 +832,7 @@ class CachedCollectionViewRenderTest < ActiveSupport::TestCase
     ActionView::LookupContext::DetailsKey.clear
 
     view_paths = ActionController::Base.view_paths
-    assert_equal ActionView::OptimizedFileSystemResolver, view_paths.first.class
+    assert_equal ActionView::FileSystemResolver, view_paths.first.class
 
     ActionView::PartialRenderer.collection_cache = ActiveSupport::Cache::MemoryStore.new
 

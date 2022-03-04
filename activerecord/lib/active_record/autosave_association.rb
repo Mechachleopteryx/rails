@@ -138,7 +138,7 @@ module ActiveRecord
   module AutosaveAssociation
     extend ActiveSupport::Concern
 
-    module AssociationBuilderExtension #:nodoc:
+    module AssociationBuilderExtension # :nodoc:
       def self.build(model, reflection)
         model.send(:add_autosave_association_callbacks, reflection)
       end
@@ -150,7 +150,6 @@ module ActiveRecord
 
     included do
       Associations::Builder::Association.extensions << AssociationBuilderExtension
-      mattr_accessor :index_nested_attribute_errors, instance_writer: false, default: false
     end
 
     module ClassMethods # :nodoc:
@@ -196,7 +195,7 @@ module ActiveRecord
             after_create save_method
             after_update save_method
           elsif reflection.has_one?
-            define_method(save_method) { save_has_one_association(reflection) } unless method_defined?(save_method)
+            define_non_cyclic_method(save_method) { save_has_one_association(reflection) }
             # Configures two callbacks instead of a single after_save so that
             # the model may rely on their execution order relative to its
             # own callbacks.
@@ -235,16 +234,7 @@ module ActiveRecord
     def reload(options = nil)
       @marked_for_destruction = false
       @destroyed_by_association = nil
-      @saving = false
       super
-    end
-
-    def save(**options) # :nodoc
-      _saving { super }
-    end
-
-    def save!(**options) # :nodoc:
-      _saving { super }
     end
 
     # Marks this record to be destroyed as part of the parent's save transaction.
@@ -282,21 +272,7 @@ module ActiveRecord
       new_record? || has_changes_to_save? || marked_for_destruction? || nested_records_changed_for_autosave?
     end
 
-    protected
-      def _can_save? # :nodoc:
-        !destroyed? && !@saving
-      end
-
     private
-      # Track if this record is being saved. If it is being saved we
-      # can skip saving it in the autosave callbacks.
-      def _saving
-        previously_saving, @saving = @saving, true
-        yield
-      ensure
-        @saving = previously_saving
-      end
-
       # Returns the record for an association collection that should be validated
       # or saved. If +autosave+ is +false+ only new records will be returned,
       # unless the parent is/was a new record itself.
@@ -358,7 +334,7 @@ module ActiveRecord
 
         unless valid = record.valid?(context)
           if reflection.options[:autosave]
-            indexed_attribute = !index.nil? && (reflection.options[:index_errors] || ActiveRecord::Base.index_nested_attribute_errors)
+            indexed_attribute = !index.nil? && (reflection.options[:index_errors] || ActiveRecord.index_nested_attribute_errors)
 
             record.errors.group_by_attribute.each { |attribute, errors|
               attribute = normalize_reflection_attribute(indexed_attribute, reflection, index, attribute)
@@ -423,11 +399,13 @@ module ActiveRecord
             end
 
             records.each do |record|
-              next unless record._can_save?
+              next if record.destroyed?
 
               saved = true
 
               if autosave != false && (new_record_before_save || record.new_record?)
+                association.set_inverse_instance(record)
+
                 if autosave
                   saved = association.insert_record(record, false)
                 elsif !reflection.nested?
@@ -460,7 +438,7 @@ module ActiveRecord
         association = association_instance_get(reflection.name)
         record      = association && association.load_target
 
-        if record&._can_save?
+        if record && !record.destroyed?
           autosave = reflection.options[:autosave]
 
           if autosave && record.marked_for_destruction?
@@ -468,12 +446,10 @@ module ActiveRecord
           elsif autosave != false
             key = reflection.options[:primary_key] ? public_send(reflection.options[:primary_key]) : id
 
-            if (autosave && record.changed_for_autosave?) || record_changed?(reflection, record, key)
+            if (autosave && record.changed_for_autosave?) || _record_changed?(reflection, record, key)
               unless reflection.through_reflection
                 record[reflection.foreign_key] = key
-                if inverse_reflection = reflection.inverse_of
-                  record.association(inverse_reflection.name).inversed_from(self)
-                end
+                association.set_inverse_instance(record)
               end
 
               saved = record.save(validate: !autosave)
@@ -485,7 +461,7 @@ module ActiveRecord
       end
 
       # If the record is new or it has changed, returns true.
-      def record_changed?(reflection, record, key)
+      def _record_changed?(reflection, record, key)
         record.new_record? ||
           association_foreign_key_changed?(reflection, record, key) ||
           record.will_save_change_to_attribute?(reflection.foreign_key)
@@ -505,7 +481,7 @@ module ActiveRecord
         return unless association && association.loaded? && !association.stale_target?
 
         record = association.load_target
-        if record&._can_save?
+        if record && !record.destroyed?
           autosave = reflection.options[:autosave]
 
           if autosave && record.marked_for_destruction?

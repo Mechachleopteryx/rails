@@ -39,7 +39,7 @@ class TestHelperMailerTest < ActionMailer::TestCase
   end
 
   teardown do
-    ActionMailer::Base.deliver_later_queue_name = @previous_delivery_method
+    ActionMailer::Base.deliver_later_queue_name = @previous_deliver_later_queue_name
   end
 
   def test_setup_sets_right_action_mailer_options
@@ -214,20 +214,6 @@ class TestHelperMailerTest < ActionMailer::TestCase
     end
   end
 
-  def test_assert_enqueued_emails_with_legacy_delivery_job
-    previous_delivery_job = TestHelperMailer.delivery_job
-    TestHelperMailer.delivery_job = ActionMailer::DeliveryJob
-    assert_nothing_raised do
-      assert_enqueued_emails 1 do
-        silence_stream($stdout) do
-          TestHelperMailer.test.deliver_later
-        end
-      end
-    end
-  ensure
-    TestHelperMailer.delivery_job = previous_delivery_job
-  end
-
   def test_assert_enqueued_parameterized_emails
     assert_nothing_raised do
       assert_enqueued_emails 1 do
@@ -236,20 +222,6 @@ class TestHelperMailerTest < ActionMailer::TestCase
         end
       end
     end
-  end
-
-  def test_assert_enqueued_parameterized_emails_with_legacy_delivery_job
-    previous_delivery_job = TestHelperMailer.delivery_job
-    TestHelperMailer.delivery_job = ActionMailer::DeliveryJob
-    assert_nothing_raised do
-      assert_enqueued_emails 1 do
-        silence_stream($stdout) do
-          TestHelperMailer.with(a: 1).test.deliver_later
-        end
-      end
-    end
-  ensure
-    TestHelperMailer.delivery_job = previous_delivery_job
   end
 
   def test_assert_enqueued_emails_too_few_sent

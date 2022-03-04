@@ -15,7 +15,8 @@ module ActiveRecord
         [
           ActiveRecord::Relation,
           ActiveRecord::Associations::CollectionProxy,
-          ActiveRecord::AssociationRelation
+          ActiveRecord::AssociationRelation,
+          ActiveRecord::DisableJoinsAssociationRelation
         ].each do |klass|
           delegate = Class.new(klass) {
             include ClassSpecificRelation
@@ -70,7 +71,7 @@ module ActiveRecord
             define_method(method) do |*args, &block|
               scoping { klass.public_send(method, *args, &block) }
             end
-            ruby2_keywords(method) if respond_to?(:ruby2_keywords, true)
+            ruby2_keywords(method)
           end
         end
       end
@@ -86,7 +87,7 @@ module ActiveRecord
 
     delegate :to_xml, :encode_with, :length, :each, :join,
              :[], :&, :|, :+, :-, :sample, :reverse, :rotate, :compact, :in_groups, :in_groups_of,
-             :to_sentence, :to_formatted_s, :as_json,
+             :to_sentence, :to_fs, :to_formatted_s, :as_json,
              :shuffle, :split, :slice, :index, :rindex, to: :records
 
     delegate :primary_key, :connection, to: :klass
@@ -109,7 +110,7 @@ module ActiveRecord
             super
           end
         end
-        ruby2_keywords(:method_missing) if respond_to?(:ruby2_keywords, true)
+        ruby2_keywords(:method_missing)
     end
 
     module ClassMethods # :nodoc:

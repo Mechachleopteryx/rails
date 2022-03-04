@@ -20,7 +20,7 @@ module ActionText
       end
 
       def from_attachables(attachables)
-        Array(attachables).map { |attachable| from_attachable(attachable) }.compact
+        Array(attachables).filter_map { |attachable| from_attachable(attachable) }
       end
 
       def from_attachable(attachable, attributes = {})
@@ -91,7 +91,7 @@ module ActionText
 
     private
       def node_attributes
-        @node_attributes ||= ATTRIBUTES.map { |name| [ name.underscore, node[name] ] }.to_h.compact
+        @node_attributes ||= ATTRIBUTES.to_h { |name| [ name.underscore, node[name] ] }.compact
       end
 
       def attachable_attributes

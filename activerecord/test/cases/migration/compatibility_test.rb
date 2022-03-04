@@ -335,6 +335,260 @@ module ActiveRecord
         assert connection.index_exists?(:testings, [:gizmo_type, :gizmo_id], name: :index_testings_on_gizmo_type_and_gizmo_id)
       end
 
+      def test_datetime_doesnt_set_precision_on_create_table
+        migration = Class.new(ActiveRecord::Migration[6.1]) {
+          def migrate(x)
+            create_table :more_testings do |t|
+              t.datetime :published_at
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:more_testings, :published_at, **precision_implicit_default)
+      ensure
+        connection.drop_table :more_testings rescue nil
+      end
+
+      def test_datetime_doesnt_set_precision_on_change_table_4_2
+        create_migration = Class.new(ActiveRecord::Migration[4.2]) {
+          def migrate(x)
+            create_table :more_testings do |t|
+              t.datetime :published_at
+            end
+          end
+        }.new
+
+        change_migration = Class.new(ActiveRecord::Migration[4.2]) {
+          def migrate(x)
+            change_table :more_testings do |t|
+              t.datetime :published_at, default: Time.now
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [create_migration, change_migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:more_testings, :published_at, **precision_implicit_default)
+      ensure
+        connection.drop_table :more_testings rescue nil
+      end
+
+      def test_datetime_doesnt_set_precision_on_change_table_5_0
+        create_migration = Class.new(ActiveRecord::Migration[5.0]) {
+          def migrate(x)
+            create_table :more_testings do |t|
+              t.datetime :published_at
+            end
+          end
+        }.new
+
+        change_migration = Class.new(ActiveRecord::Migration[5.0]) {
+          def migrate(x)
+            change_table :more_testings do |t|
+              t.datetime :published_at, default: Time.now
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [create_migration, change_migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:more_testings, :published_at, **precision_implicit_default)
+      ensure
+        connection.drop_table :more_testings rescue nil
+      end
+
+      def test_datetime_doesnt_set_precision_on_change_table_5_1
+        create_migration = Class.new(ActiveRecord::Migration[5.1]) {
+          def migrate(x)
+            create_table :more_testings do |t|
+              t.datetime :published_at
+            end
+          end
+        }.new
+
+        change_migration = Class.new(ActiveRecord::Migration[5.1]) {
+          def migrate(x)
+            change_table :more_testings do |t|
+              t.datetime :published_at, default: Time.now
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [create_migration, change_migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:more_testings, :published_at, **precision_implicit_default)
+      ensure
+        connection.drop_table :more_testings rescue nil
+      end
+
+      def test_datetime_doesnt_set_precision_on_change_table_5_2
+        create_migration = Class.new(ActiveRecord::Migration[5.2]) {
+          def migrate(x)
+            create_table :more_testings do |t|
+              t.datetime :published_at
+            end
+          end
+        }.new
+
+        change_migration = Class.new(ActiveRecord::Migration[5.2]) {
+          def migrate(x)
+            change_table :more_testings do |t|
+              t.datetime :published_at, default: Time.now
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [create_migration, change_migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:more_testings, :published_at, **precision_implicit_default)
+      ensure
+        connection.drop_table :more_testings rescue nil
+      end
+
+      def test_datetime_doesnt_set_precision_on_change_table_6_0
+        create_migration = Class.new(ActiveRecord::Migration[6.0]) {
+          def migrate(x)
+            create_table :more_testings do |t|
+              t.datetime :published_at
+            end
+          end
+        }.new
+
+        change_migration = Class.new(ActiveRecord::Migration[6.0]) {
+          def migrate(x)
+            change_table :more_testings do |t|
+              t.datetime :published_at, default: Time.now
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [create_migration, change_migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:more_testings, :published_at, **precision_implicit_default)
+      ensure
+        connection.drop_table :more_testings rescue nil
+      end
+
+      def test_datetime_doesnt_set_precision_on_change_table_6_1
+        create_migration = Class.new(ActiveRecord::Migration[6.1]) {
+          def migrate(x)
+            create_table :more_testings do |t|
+              t.datetime :published_at
+            end
+          end
+        }.new
+
+        change_migration = Class.new(ActiveRecord::Migration[6.1]) {
+          def migrate(x)
+            change_table :more_testings do |t|
+              t.datetime :published_at, default: Time.now
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [create_migration, change_migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:more_testings, :published_at, **precision_implicit_default)
+      ensure
+        connection.drop_table :more_testings rescue nil
+      end
+
+      def test_datetime_doesnt_set_precision_on_add_column_5_0
+        migration = Class.new(ActiveRecord::Migration[5.0]) {
+          def migrate(x)
+            add_column :testings, :published_at, :datetime, default: Time.now
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:testings, :published_at, **precision_implicit_default)
+      end
+
+      def test_datetime_doesnt_set_precision_on_add_column_6_1
+        migration = Class.new(ActiveRecord::Migration[6.1]) {
+          def migrate(x)
+            add_column :testings, :published_at, :datetime, default: Time.now
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:testings, :published_at, **precision_implicit_default)
+      end
+
+      def test_change_table_allows_if_exists_option_on_7_0
+        migration = Class.new(ActiveRecord::Migration[7.0]) {
+          def migrate(x)
+            change_table(:testings) do |t|
+              t.remove :foo, if_exists: true
+            end
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [migration], @schema_migration).migrate
+
+        assert_not connection.column_exists?(:testings, :foo)
+      end
+
+      def test_add_reference_allows_if_exists_option_on_7_0
+        migration = Class.new(ActiveRecord::Migration[7.0]) {
+          def migrate(x)
+            add_reference :testings, :widget, if_not_exists: true
+          end
+        }.new
+
+        ActiveRecord::Migrator.new(:up, [migration], @schema_migration).migrate
+
+        assert connection.column_exists?(:testings, :widget_id)
+      end
+
+      if current_adapter?(:SQLite3Adapter)
+        def test_references_stays_as_integer_column_on_create_table_with_reference_6_0
+          migration = Class.new(ActiveRecord::Migration[6.0]) {
+            def migrate(x)
+              create_table :more_testings do |t|
+                t.references :testings
+              end
+            end
+          }.new
+
+          ActiveRecord::Migrator.new(:up, [migration], @schema_migration).migrate
+
+          testings_id_column = connection.columns(:more_testings).find { |el| el.name == "testings_id" }
+          assert_match(/integer/i, testings_id_column.sql_type)
+        ensure
+          connection.drop_table :more_testings rescue nil
+        end
+
+        def test_references_stays_as_integer_column_on_add_reference_6_0
+          create_migration = Class.new(ActiveRecord::Migration[6.0]) {
+            def version; 100 end
+            def migrate(x)
+              create_table :more_testings do |t|
+                t.string :test
+              end
+            end
+          }.new
+
+          migration = Class.new(ActiveRecord::Migration[6.0]) {
+            def version; 101 end
+            def migrate(x)
+              add_reference :more_testings, :testings
+            end
+          }.new
+
+          ActiveRecord::Migrator.new(:up, [create_migration, migration], @schema_migration).migrate
+
+          testings_id_column = connection.columns(:more_testings).find { |el| el.name == "testings_id" }
+          assert_match(/integer/i, testings_id_column.sql_type)
+        ensure
+          connection.drop_table :more_testings rescue nil
+        end
+      end
+
       private
         def precision_implicit_default
           if current_adapter?(:Mysql2Adapter)

@@ -8,6 +8,10 @@ ActiveRecord::Schema.define do
   #                                                                     #
   # ------------------------------------------------------------------- #
 
+  create_table :"1_need_quoting", force: true do |t|
+    t.string :name
+  end
+
   create_table :accounts, force: true do |t|
     t.references :firm, index: false
     t.string  :firm_name
@@ -38,6 +42,7 @@ ActiveRecord::Schema.define do
     t.string :name
     t.integer :wheels_count, default: 0, null: false
     t.datetime :wheels_owned_at
+    t.timestamp :manufactured_at, default: -> { "CURRENT_TIMESTAMP" }
   end
 
   create_table :articles, force: true do |t|
@@ -51,6 +56,10 @@ ActiveRecord::Schema.define do
   create_table :articles_tags, force: true do |t|
     t.references :article
     t.references :tag
+  end
+
+  create_table :attachments, force: true do |t|
+    t.references :record, polymorphic: true, null: false
   end
 
   create_table :audit_logs, force: true do |t|
@@ -111,6 +120,7 @@ ActiveRecord::Schema.define do
     t.column :cover, :string, default: "hard"
     t.string :isbn
     t.string :external_id
+    t.column :original_name, :string
     t.datetime :published_on
     t.boolean :boolean_status
     t.index [:author_id, :name], unique: true
@@ -118,14 +128,33 @@ ActiveRecord::Schema.define do
     t.index :isbn, where: "published_on IS NOT NULL", unique: true
     t.index "(lower(external_id))", unique: true if supports_expression_index?
 
+    if supports_datetime_with_precision?
+      t.datetime :created_at, precision: 6
+      t.datetime :updated_at, precision: 6
+    else
+      t.datetime :created_at
+      t.datetime :updated_at
+    end
+    t.date :updated_on
+  end
+
+  create_table :encrypted_books, id: :integer, force: true do |t|
+    t.references :author
+    t.string :format
+    t.column :name, :string
+    t.column :original_name, :string
+
     t.datetime :created_at
     t.datetime :updated_at
-    t.date :updated_on
   end
 
   create_table :booleans, force: true do |t|
     t.boolean :value
     t.boolean :has_fun, null: false, default: false
+  end
+
+  create_table :branches, force: true do |t|
+    t.references :branch
   end
 
   create_table :bulbs, primary_key: "ID", force: true do |t|
@@ -224,6 +253,8 @@ ActiveRecord::Schema.define do
     # See #14855.
     t.string :resource_id
     t.string :resource_type
+    t.integer :origin_id
+    t.string :origin_type
     t.integer :developer_id
     t.datetime :updated_at
     t.datetime :deleted_at
@@ -603,7 +634,7 @@ ActiveRecord::Schema.define do
   create_table :memberships, force: true do |t|
     t.datetime :joined_on
     t.integer :club_id, :member_id
-    t.boolean :favourite, default: false
+    t.boolean :favorite, default: false
     t.integer :type
     t.datetime :created_at
     t.datetime :updated_at
@@ -711,6 +742,7 @@ ActiveRecord::Schema.define do
   disable_referential_integrity do
     create_table :parrots, force: :cascade do |t|
       t.string :name
+      t.integer :breed, default: 0
       t.string :color
       t.string :parrot_sti_class
       t.integer :killer_id
@@ -898,7 +930,7 @@ ActiveRecord::Schema.define do
   create_table :references, force: true do |t|
     t.integer :person_id
     t.integer :job_id
-    t.boolean :favourite
+    t.boolean :favorite
     t.integer :lock_version, default: 0
   end
 
@@ -1079,6 +1111,13 @@ ActiveRecord::Schema.define do
     t.datetime :updated_at
   end
 
+  create_table :translations, force: true do |t|
+    t.string :locale, null: false
+    t.string :key, null: false
+    t.string :value, null: false
+    t.references :attachment
+  end
+
   create_table :tuning_pegs, force: true do |t|
     t.integer :guitar_id
     t.float :pitch
@@ -1228,6 +1267,16 @@ ActiveRecord::Schema.define do
     end
   end
 
+  disable_referential_integrity do
+    create_table :fk_object_to_point_tos, force: :cascade do |t|
+    end
+
+    create_table :fk_pointing_to_non_existent_objects, force: true do |t|
+      t.references :fk_object_to_point_to, null: false, index: false
+      t.foreign_key :fk_object_to_point_tos, column: "fk_object_to_point_to_id", name: "fk_that_will_be_broken"
+    end
+  end
+
   create_table :overloaded_types, force: true do |t|
     t.float :overloaded_float, default: 500
     t.float :unoverloaded_float
@@ -1240,6 +1289,8 @@ ActiveRecord::Schema.define do
   create_table :users, force: true do |t|
     t.string :token
     t.string :auth_token
+    t.string :password_digest
+    t.string :recovery_password_digest
   end
 
   create_table :test_with_keyword_column_name, force: true do |t|

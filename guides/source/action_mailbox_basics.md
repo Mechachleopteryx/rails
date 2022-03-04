@@ -76,7 +76,7 @@ $ bin/rails action_mailbox:ingress:exim URL=https://example.com/rails/action_mai
 ### Mailgun
 
 Give Action Mailbox your
-Mailgun Signing key (which you can find under Settings -> Security & Users -> API security in Mailgun)
+Mailgun Signing key (which you can find under Settings -> Security & Users -> API security in Mailgun),
 so it can authenticate requests to the Mailgun ingress.
 
 Use `bin/rails credentials:edit` to add your Signing key to your application's
@@ -105,7 +105,7 @@ fully-qualified URL `https://example.com/rails/action_mailbox/mailgun/inbound_em
 
 ### Mandrill
 
-Give Action Mailbox your Mandrill API key so it can authenticate requests to
+Give Action Mailbox your Mandrill API key, so it can authenticate requests to
 the Mandrill ingress.
 
 Use `bin/rails credentials:edit` to add your API key to your application's
@@ -333,10 +333,12 @@ on your side of the application. The InboundEmail simply stays in the system
 for the extra time to provide debugging and forensics options.
 
 The actual incineration is done via the `IncinerationJob` that's scheduled
-to run after `config.action_mailbox.incinerate_after` time. This value is
+to run after [`config.action_mailbox.incinerate_after`][] time. This value is
 by default set to `30.days`, but you can change it in your production.rb
 configuration. (Note that this far-future incineration scheduling relies on
 your job queue being able to hold jobs for that long.)
+
+[`config.action_mailbox.incinerate_after`]: configuring.html#config-action-mailbox-incinerate-after
 
 ## Working with Action Mailbox in development
 
@@ -373,3 +375,5 @@ class ForwardsMailboxTest < ActionMailbox::TestCase
   end
 end
 ```
+
+Please refer to the [ActionMailbox::TestHelper API](https://api.rubyonrails.org/classes/ActionMailbox/TestHelper.html) for further test helper methods.

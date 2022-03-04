@@ -13,10 +13,10 @@ module ActiveRecord
     # * add_reference
     # * add_timestamps
     # * change_column
-    # * change_column_default (must supply a :from and :to option)
+    # * change_column_default (must supply a +:from+ and +:to+ option)
     # * change_column_null
-    # * change_column_comment (must supply a :from and :to option)
-    # * change_table_comment (must supply a :from and :to option)
+    # * change_column_comment (must supply a +:from+ and +:to+ option)
+    # * change_table_comment (must supply a +:from+ and +:to+ option)
     # * create_join_table
     # * create_table
     # * disable_extension
@@ -112,7 +112,7 @@ module ActiveRecord
             record(:"#{method}", args, &block)  #   record(:create_table, args, &block)
           end                                   # end
         EOV
-        ruby2_keywords(method) if respond_to?(:ruby2_keywords, true)
+        ruby2_keywords(method)
       end
       alias :add_belongs_to :add_reference
       alias :remove_belongs_to :remove_reference
@@ -154,9 +154,9 @@ module ActiveRecord
 
         include StraightReversions
 
-        def invert_transaction(args)
+        def invert_transaction(args, &block)
           sub_recorder = CommandRecorder.new(delegate)
-          sub_recorder.revert { yield }
+          sub_recorder.revert(&block)
 
           invertions_proc = proc {
             sub_recorder.replay(self)
@@ -286,7 +286,7 @@ module ActiveRecord
             super
           end
         end
-        ruby2_keywords(:method_missing) if respond_to?(:ruby2_keywords, true)
+        ruby2_keywords(:method_missing)
     end
   end
 end

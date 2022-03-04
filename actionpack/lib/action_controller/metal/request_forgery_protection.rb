@@ -4,11 +4,11 @@ require "rack/session/abstract/id"
 require "action_controller/metal/exceptions"
 require "active_support/security_utils"
 
-module ActionController #:nodoc:
-  class InvalidAuthenticityToken < ActionControllerError #:nodoc:
+module ActionController # :nodoc:
+  class InvalidAuthenticityToken < ActionControllerError # :nodoc:
   end
 
-  class InvalidCrossOriginRequest < ActionControllerError #:nodoc:
+  class InvalidCrossOriginRequest < ActionControllerError # :nodoc:
   end
 
   # Controller actions are protected from Cross-Site Request Forgery (CSRF) attacks
@@ -32,7 +32,7 @@ module ActionController #:nodoc:
   # response may be extracted. To prevent this, only XmlHttpRequest (known as XHR or
   # Ajax) requests are allowed to make requests for JavaScript responses.
   #
-  # Subclasses of <tt>ActionController::Base</tt> are protected by default with the
+  # Subclasses of ActionController::Base are protected by default with the
   # <tt>:exception</tt> strategy, which raises an
   # <tt>ActionController::InvalidAuthenticityToken</tt> error on unverified requests.
   #
@@ -90,10 +90,6 @@ module ActionController #:nodoc:
       config_accessor :default_protect_from_forgery
       self.default_protect_from_forgery = false
 
-      # Controls whether URL-safe CSRF tokens are generated.
-      config_accessor :urlsafe_csrf_tokens, instance_writer: false
-      self.urlsafe_csrf_tokens = false
-
       helper_method :form_authenticity_token
       helper_method :protect_against_forgery?
     end
@@ -115,8 +111,8 @@ module ActionController #:nodoc:
       #
       # Valid Options:
       #
-      # * <tt>:only/:except</tt> - Only apply forgery protection to a subset of actions. For example <tt>only: [ :create, :create_all ]</tt>.
-      # * <tt>:if/:unless</tt> - Turn off the forgery protection entirely depending on the passed Proc or method reference.
+      # * <tt>:only</tt> / <tt>:except</tt> - Only apply forgery protection to a subset of actions. For example <tt>only: [ :create, :create_all ]</tt>.
+      # * <tt>:if</tt> / <tt>:unless</tt> - Turn off the forgery protection entirely depending on the passed Proc or method reference.
       # * <tt>:prepend</tt> - By default, the verification of the authentication token will be added at the position of the
       #   protect_from_forgery call in your application. This means any callbacks added before are run first. This is useful
       #   when you want your forgery protection to depend on other callbacks, like authentication methods (Oauth vs Cookie auth).
@@ -124,10 +120,26 @@ module ActionController #:nodoc:
       #   If you need to add verification to the beginning of the callback chain, use <tt>prepend: true</tt>.
       # * <tt>:with</tt> - Set the method to handle unverified request.
       #
-      # Valid unverified request handling methods are:
+      # Built-in unverified request handling methods are:
       # * <tt>:exception</tt> - Raises ActionController::InvalidAuthenticityToken exception.
       # * <tt>:reset_session</tt> - Resets the session.
       # * <tt>:null_session</tt> - Provides an empty session during request but doesn't reset it completely. Used as default if <tt>:with</tt> option is not specified.
+      #
+      # You can also implement custom strategy classes for unverified request handling:
+      #
+      #    class CustomStrategy
+      #      def initialize(controller)
+      #        @controller = controller
+      #      end
+      #
+      #      def handle_unverified_request
+      #        # Custom behaviour for unverfied request
+      #      end
+      #    end
+      #
+      #    class ApplicationController < ActionController:x:Base
+      #      protect_from_forgery with: CustomStrategy
+      #    end
       def protect_from_forgery(options = {})
         options = options.reverse_merge(prepend: false)
 
@@ -143,14 +155,23 @@ module ActionController #:nodoc:
       #
       # See +skip_before_action+ for allowed options.
       def skip_forgery_protection(options = {})
-        skip_before_action :verify_authenticity_token, options
+        skip_before_action :verify_authenticity_token, options.reverse_merge(raise: false)
       end
 
       private
         def protection_method_class(name)
-          ActionController::RequestForgeryProtection::ProtectionMethods.const_get(name.to_s.classify)
-        rescue NameError
-          raise ArgumentError, "Invalid request forgery protection method, use :null_session, :exception, or :reset_session"
+          case name
+          when :null_session
+            ProtectionMethods::NullSession
+          when :reset_session
+            ProtectionMethods::ResetSession
+          when :exception
+            ProtectionMethods::Exception
+          when Class
+            name
+          else
+            raise ArgumentError, "Invalid request forgery protection method, use :null_session, :exception, :reset_session, or a custom forgery protection class."
+          end
         end
     end
 
@@ -170,7 +191,7 @@ module ActionController #:nodoc:
         end
 
         private
-          class NullSessionHash < Rack::Session::Abstract::SessionHash #:nodoc:
+          class NullSessionHash < Rack::Session::Abstract::SessionHash # :nodoc:
             def initialize(req)
               super(nil, req)
               @data = {}
@@ -183,9 +204,13 @@ module ActionController #:nodoc:
             def exists?
               true
             end
+
+            def enabled?
+              false
+            end
           end
 
-          class NullCookieJar < ActionDispatch::Cookies::CookieJar #:nodoc:
+          class NullCookieJar < ActionDispatch::Cookies::CookieJar # :nodoc:
             def write(*)
               # nothing
             end
@@ -203,12 +228,14 @@ module ActionController #:nodoc:
       end
 
       class Exception
+        attr_accessor :warning_message
+
         def initialize(controller)
           @controller = controller
         end
 
         def handle_unverified_request
-          raise ActionController::InvalidAuthenticityToken
+          raise ActionController::InvalidAuthenticityToken, warning_message
         end
       end
     end
@@ -228,22 +255,31 @@ module ActionController #:nodoc:
         mark_for_same_origin_verification!
 
         if !verified_request?
-          if logger && log_warning_on_csrf_failure
-            if valid_request_origin?
-              logger.warn "Can't verify CSRF token authenticity."
-            else
-              logger.warn "HTTP Origin header (#{request.origin}) didn't match request.base_url (#{request.base_url})"
-            end
-          end
+          logger.warn unverified_request_warning_message if logger && log_warning_on_csrf_failure
+
           handle_unverified_request
         end
       end
 
       def handle_unverified_request # :doc:
-        forgery_protection_strategy.new(self).handle_unverified_request
+        protection_strategy = forgery_protection_strategy.new(self)
+
+        if protection_strategy.respond_to?(:warning_message)
+          protection_strategy.warning_message = unverified_request_warning_message
+        end
+
+        protection_strategy.handle_unverified_request
       end
 
-      #:nodoc:
+      def unverified_request_warning_message # :nodoc:
+        if valid_request_origin?
+          "Can't verify CSRF token authenticity."
+        else
+          "HTTP Origin header (#{request.origin}) didn't match request.base_url (#{request.base_url})"
+        end
+      end
+
+      # :nodoc:
       CROSS_ORIGIN_JAVASCRIPT_WARNING = "Security warning: an embedded " \
         "<script> tag on another site requested protected JavaScript. " \
         "If you know what you're doing, go ahead and disable forgery " \
@@ -438,7 +474,7 @@ module ActionController #:nodoc:
 
       # Checks if the controller allows forgery protection.
       def protect_against_forgery? # :doc:
-        allow_forgery_protection
+        allow_forgery_protection && (!session.respond_to?(:enabled?) || session.enabled?)
       end
 
       NULL_ORIGIN_MESSAGE = <<~MSG
@@ -468,31 +504,15 @@ module ActionController #:nodoc:
       end
 
       def generate_csrf_token # :nodoc:
-        if urlsafe_csrf_tokens
-          SecureRandom.urlsafe_base64(AUTHENTICITY_TOKEN_LENGTH, padding: false)
-        else
-          SecureRandom.base64(AUTHENTICITY_TOKEN_LENGTH)
-        end
+        SecureRandom.urlsafe_base64(AUTHENTICITY_TOKEN_LENGTH)
       end
 
       def encode_csrf_token(csrf_token) # :nodoc:
-        if urlsafe_csrf_tokens
-          Base64.urlsafe_encode64(csrf_token, padding: false)
-        else
-          Base64.strict_encode64(csrf_token)
-        end
+        Base64.urlsafe_encode64(csrf_token, padding: false)
       end
 
       def decode_csrf_token(encoded_csrf_token) # :nodoc:
-        if urlsafe_csrf_tokens
-          Base64.urlsafe_decode64(encoded_csrf_token)
-        else
-          begin
-            Base64.strict_decode64(encoded_csrf_token)
-          rescue ArgumentError
-            Base64.urlsafe_decode64(encoded_csrf_token)
-          end
-        end
+        Base64.urlsafe_decode64(encoded_csrf_token)
       end
   end
 end

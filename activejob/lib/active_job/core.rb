@@ -97,7 +97,7 @@ module ActiveJob
       @exception_executions = {}
       @timezone   = Time.zone&.name
     end
-    ruby2_keywords(:initialize) if respond_to?(:ruby2_keywords, true)
+    ruby2_keywords(:initialize)
 
     # Returns a hash with the job data that can safely be passed to the
     # queuing adapter.
@@ -154,6 +154,16 @@ module ActiveJob
       self.locale               = job_data["locale"] || I18n.locale.to_s
       self.timezone             = job_data["timezone"] || Time.zone&.name
       self.enqueued_at          = job_data["enqueued_at"]
+    end
+
+    # Configures the job with the given options.
+    def set(options = {}) # :nodoc:
+      self.scheduled_at = options[:wait].seconds.from_now.to_f if options[:wait]
+      self.scheduled_at = options[:wait_until].to_f if options[:wait_until]
+      self.queue_name   = self.class.queue_name_from_part(options[:queue]) if options[:queue]
+      self.priority     = options[:priority].to_i if options[:priority]
+
+      self
     end
 
     private

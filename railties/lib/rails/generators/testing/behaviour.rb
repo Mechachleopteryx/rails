@@ -66,9 +66,8 @@ module Rails
         # printed by the generator.
         def run_generator(args = default_arguments, config = {})
           capture(:stdout) do
-            args += ["--skip-bundle"] unless args.include? "--dev"
-            args |= ["--skip-bootsnap"] unless args.include? "--no-skip-bootsnap"
-            args |= ["--skip-webpack-install"] unless args.include? "--no-skip-webpack-install"
+            args += ["--skip-bundle"] unless args.include?("--no-skip-bundle") || args.include?("--dev")
+            args |= ["--skip-bootsnap"] unless args.include?("--no-skip-bootsnap")
 
             generator_class.start(args, config.reverse_merge(destination_root: destination_root))
           end
@@ -82,7 +81,7 @@ module Rails
         # Create a Rails::Generators::GeneratedAttribute by supplying the
         # attribute type and, optionally, the attribute name:
         #
-        #   create_generated_attribute(:string, 'name')
+        #   create_generated_attribute(:string, "name")
         def create_generated_attribute(attribute_type, name = "test", index = nil)
           Rails::Generators::GeneratedAttribute.parse([name, attribute_type, index].compact.join(":"))
         end

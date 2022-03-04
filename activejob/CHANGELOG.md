@@ -1,30 +1,39 @@
-*   Communicate enqueue failures to callers of `perform_later`.
+*   Add missing `bigdecimal` require in `ActiveJob::Arguments`
 
-    `perform_later` can now optionally take a block which will execute after
-    the adapter attempts to enqueue the job. The block will receive the job
-    instance as an argument even if the enqueue was not successful.
-    Additionally, `ActiveJob` adapters now have the ability to raise an
-    `ActiveJob::EnqueueError` which will be caught and stored in the job
-    instance so code attempting to enqueue jobs can inspect any raised
-    `EnqueueError` using the block.
+    Could cause `uninitialized constant ActiveJob::Arguments::BigDecimal (NameError)`
+    when loading Active Job in isolation.
 
-        MyJob.perform_later do |job|
-          unless job.successfully_enqueued?
-            if job.enqueue_error&.message == "Redis was unavailable"
-              # invoke some code that will retry the job after a delay
-            end
-          end
-        end
+    *Jean Boussier*
 
-    *Daniel Morton*
+*   Allow testing `discard_on/retry_on ActiveJob::DeserializationError`
 
-*   Don't log rescuable exceptions defined with `rescue_from`.
+    Previously in `perform_enqueued_jobs`, `deserialize_arguments_if_needed`
+    was called before calling `perform_now`. When a record no longer exists
+    and is serialized using GlobalID this led to raising
+    an `ActiveJob::DeserializationError` before reaching `perform_now` call.
+    This behaviour makes difficult testing the job `discard_on/retry_on` logic.
 
-    *Hu Hailin*
+    Now `deserialize_arguments_if_needed` call is postponed to when `perform_now`
+    is called.
 
-*   Allow `rescue_from` to rescue all exceptions.
+    Example:
 
-    *Adrianna Chang*, *Étienne Barrié*
+    ```ruby
+    class UpdateUserJob < ActiveJob::Base
+      discard_on ActiveJob::DeserializationError
 
+      def perform(user)
+        # ...
+      end
+    end
 
-Please check [6-1-stable](https://github.com/rails/rails/blob/6-1-stable/activejob/CHANGELOG.md) for previous changes.
+    # In the test
+    User.destroy_all
+    assert_nothing_raised do
+      perform_enqueued_jobs only: UpdateUserJob
+    end
+    ```
+
+    *Jacopo Beschi*
+
+Please check [7-0-stable](https://github.com/rails/rails/blob/7-0-stable/activejob/CHANGELOG.md) for previous changes.

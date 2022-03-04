@@ -211,6 +211,24 @@ class ContentSecurityPolicyTest < ActiveSupport::TestCase
     @policy.require_sri_for
     assert_no_match %r{require-sri-for}, @policy.build
 
+    @policy.require_trusted_types_for :script
+    assert_match %r{require-trusted-types-for 'script'}, @policy.build
+
+    @policy.require_trusted_types_for
+    assert_no_match %r{require-trusted-types-for}, @policy.build
+
+    @policy.trusted_types :none
+    assert_match %r{trusted-types 'none'}, @policy.build
+
+    @policy.trusted_types "foo", "bar"
+    assert_match %r{trusted-types foo bar}, @policy.build
+
+    @policy.trusted_types "foo", "bar", :allow_duplicates
+    assert_match %r{trusted-types foo bar 'allow-duplicates'}, @policy.build
+
+    @policy.trusted_types
+    assert_no_match %r{trusted-types}, @policy.build
+
     @policy.upgrade_insecure_requests
     assert_match %r{upgrade-insecure-requests}, @policy.build
 
@@ -235,6 +253,14 @@ class ContentSecurityPolicyTest < ActiveSupport::TestCase
 
     @policy.script_src -> { request.host }
     assert_equal "script-src www.example.com", @policy.build(controller)
+  end
+
+  def test_multiple_and_dynamic_directives
+    request = ActionDispatch::Request.new("HTTP_HOST" => "www.example.com")
+    controller = Struct.new(:request).new(request)
+
+    @policy.frame_ancestors -> { [:self, "https://example.com"] }
+    assert_equal "frame-ancestors 'self' https://example.com", @policy.build(controller)
   end
 
   def test_mixed_static_and_dynamic_directives

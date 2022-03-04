@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 #--
-# Copyright (c) 2005-2021 David Heinemeier Hansson
+# Copyright (c) 2005-2022 David Heinemeier Hansson
 #
 # Permission is hereby granted, free of charge, to any person obtaining
 # a copy of this software and associated documentation files (the
@@ -34,19 +34,24 @@ module ActiveSupport
   extend ActiveSupport::Autoload
 
   autoload :Concern
+  autoload :CodeGenerator
   autoload :ActionableError
   autoload :ConfigurationFile
   autoload :CurrentAttributes
   autoload :Dependencies
   autoload :DescendantsTracker
+  autoload :ExecutionContext
   autoload :ExecutionWrapper
   autoload :Executor
+  autoload :ErrorReporter
   autoload :FileUpdateChecker
   autoload :EventedFileUpdateChecker
   autoload :ForkTracker
   autoload :LogSubscriber
+  autoload :IsolatedExecutionState
   autoload :Notifications
   autoload :Reloader
+  autoload :PerThreadRegistry
   autoload :SecureCompareRotator
 
   eager_autoload do
@@ -61,6 +66,7 @@ module ActiveSupport
     autoload :Gzip
     autoload :Inflector
     autoload :JSON
+    autoload :JsonWithMarshalFallback
     autoload :KeyGenerator
     autoload :MessageEncryptor
     autoload :MessageVerifier
@@ -87,10 +93,16 @@ module ActiveSupport
   end
 
   cattr_accessor :test_order # :nodoc:
-  cattr_accessor :test_parallelization_disabled, default: false # :nodoc:
+  cattr_accessor :test_parallelization_threshold, default: 50 # :nodoc:
 
-  def self.disable_test_parallelization!
-    self.test_parallelization_disabled = true unless ENV["PARALLEL_WORKERS"]
+  singleton_class.attr_accessor :error_reporter # :nodoc:
+
+  def self.cache_format_version
+    Cache.format_version
+  end
+
+  def self.cache_format_version=(value)
+    Cache.format_version = value
   end
 
   def self.to_time_preserves_timezone

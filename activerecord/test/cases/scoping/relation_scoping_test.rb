@@ -42,15 +42,24 @@ class RelationScopingTest < ActiveRecord::TestCase
     assert_equal Developer.order("id DESC").to_a.reverse, Developer.order("id DESC").reverse_order
   end
 
-  def test_reverse_order_with_arel_node
+  def test_reverse_order_with_arel_attribute
     assert_equal Developer.order("id DESC").to_a.reverse, Developer.order(Developer.arel_table[:id].desc).reverse_order
   end
 
-  def test_reverse_order_with_multiple_arel_nodes
+  def test_reverse_order_with_arel_attribute_as_hash
+    assert_equal Developer.order("id DESC").to_a.reverse, Developer.order(Developer.arel_table[:id] => :desc).reverse_order
+  end
+
+  def test_reverse_order_with_arel_node_as_hash
+    node = Developer.arel_table[:id] + 0 # converts to Arel::Nodes::Grouping
+    assert_equal Developer.order("id DESC").to_a.reverse, Developer.order(node => :desc).reverse_order
+  end
+
+  def test_reverse_order_with_multiple_arel_attributes
     assert_equal Developer.order("id DESC").order("name DESC").to_a.reverse, Developer.order(Developer.arel_table[:id].desc).order(Developer.arel_table[:name].desc).reverse_order
   end
 
-  def test_reverse_order_with_arel_nodes_and_strings
+  def test_reverse_order_with_arel_attributes_and_strings
     assert_equal Developer.order("id DESC").order("name DESC").to_a.reverse, Developer.order("id DESC").order(Developer.arel_table[:name].desc).reverse_order
   end
 
@@ -425,9 +434,12 @@ class RelationScopingTest < ActiveRecord::TestCase
       select_sql = capture_sql { Author.first }.first
       assert_match(/organization_id/, select_sql)
 
-      assert_raises ArgumentError do
+      error = assert_raises ArgumentError do
         Author.where(organization_id: 1).scoping(all_queries: false) { }
       end
+
+      assert_equal "Scoping is set to apply to all queries and cannot be " \
+       "unset in a nested block.", error.message
     end
   end
 end

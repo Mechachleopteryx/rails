@@ -25,17 +25,28 @@ class SchemaDumperTest < ActiveRecord::TestCase
     assert_no_match(/INSERT INTO/, schema_info)
   end
 
-  def test_dump_schema_information_outputs_lexically_ordered_versions
+  def test_dump_schema_information_outputs_lexically_reverse_ordered_versions_regardless_of_database_order
     versions = %w{ 20100101010101 20100201010101 20100301010101 }
-    versions.reverse_each do |v|
+    versions.shuffle.each do |v|
       ActiveRecord::SchemaMigration.create!(version: v)
     end
 
     schema_info = ActiveRecord::Base.connection.dump_schema_information
-    assert_match(/20100201010101.*20100301010101/m, schema_info)
-    assert_includes schema_info, "20100101010101"
+    expected = <<~STR
+    INSERT INTO #{ActiveRecord::Base.connection.quote_table_name("schema_migrations")} (version) VALUES
+    ('20100301010101'),
+    ('20100201010101'),
+    ('20100101010101');
+
+    STR
+    assert_equal expected, schema_info
   ensure
     ActiveRecord::SchemaMigration.delete_all
+  end
+
+  def test_schema_dump_include_migration_version
+    output = standard_dump
+    assert_match %r{ActiveRecord::Schema\[#{ActiveRecord::Migration.current_version}\]\.define}, output
   end
 
   def test_schema_dump
@@ -505,6 +516,125 @@ class SchemaDumperTest < ActiveRecord::TestCase
       migration = Class.new(ActiveRecord::Migration::Current) do
         def up
           create_table("timestamps") do |t|
+            t.datetime :this_should_remain_datetime
+            t.timestamp :this_is_an_alias_of_datetime
+            t.column :without_time_zone, :timestamp
+            t.column :with_time_zone, :timestamptz
+          end
+        end
+        def down
+          drop_table("timestamps")
+        end
+      end
+      migration.migrate(:up)
+
+      output = perform_schema_dump
+      assert output.include?('t.datetime "this_should_remain_datetime"')
+      assert output.include?('t.datetime "this_is_an_alias_of_datetime"')
+      assert output.include?('t.datetime "without_time_zone"')
+      assert output.include?('t.timestamptz "with_time_zone"')
+    ensure
+      migration.migrate(:down)
+      $stdout = original
+    end
+
+    def test_schema_dump_with_timestamptz_datetime_format
+      migration, original, $stdout = nil, $stdout, StringIO.new
+
+      with_postgresql_datetime_type(:timestamptz) do
+        migration = Class.new(ActiveRecord::Migration::Current) do
+          def up
+            create_table("timestamps") do |t|
+              t.datetime :this_should_remain_datetime
+              t.timestamptz :this_is_an_alias_of_datetime
+              t.column :without_time_zone, :timestamp
+              t.column :with_time_zone, :timestamptz
+            end
+          end
+          def down
+            drop_table("timestamps")
+          end
+        end
+        migration.migrate(:up)
+
+        output = perform_schema_dump
+        assert output.include?('t.datetime "this_should_remain_datetime"')
+        assert output.include?('t.datetime "this_is_an_alias_of_datetime"')
+        assert output.include?('t.timestamp "without_time_zone"')
+        assert output.include?('t.datetime "with_time_zone"')
+      end
+    ensure
+      migration.migrate(:down)
+      $stdout = original
+    end
+
+    def test_timestamps_schema_dump_before_rails_7
+      migration, original, $stdout = nil, $stdout, StringIO.new
+
+      migration = Class.new(ActiveRecord::Migration[6.1]) do
+        def up
+          create_table("timestamps") do |t|
+            t.datetime :this_should_remain_datetime
+            t.timestamp :this_is_an_alias_of_datetime
+            t.column :this_is_also_an_alias_of_datetime, :timestamp
+          end
+        end
+        def down
+          drop_table("timestamps")
+        end
+      end
+      migration.migrate(:up)
+
+      output = perform_schema_dump
+      assert output.include?('t.datetime "this_should_remain_datetime"')
+      assert output.include?('t.datetime "this_is_an_alias_of_datetime"')
+      assert output.include?('t.datetime "this_is_also_an_alias_of_datetime"')
+    ensure
+      migration.migrate(:down)
+      $stdout = original
+    end
+
+    def test_timestamps_schema_dump_before_rails_7_with_timestamptz_setting
+      migration, original, $stdout = nil, $stdout, StringIO.new
+
+      with_postgresql_datetime_type(:timestamptz) do
+        migration = Class.new(ActiveRecord::Migration[6.1]) do
+          def up
+            create_table("timestamps") do |t|
+              t.datetime :this_should_change_to_timestamp
+              t.timestamp :this_should_stay_as_timestamp
+              t.column :this_should_also_stay_as_timestamp, :timestamp
+            end
+          end
+          def down
+            drop_table("timestamps")
+          end
+        end
+        migration.migrate(:up)
+
+        output = perform_schema_dump
+        # Normally we'd write `t.datetime` here. But because you've changed the `datetime_type`
+        # to something else, `t.datetime` now means `:timestamptz`. To ensure that old columns
+        # are still created as a `:timestamp` we need to change what is written to the schema dump.
+        #
+        # Typically in Rails we handle this through Migration versioning (`ActiveRecord::Migration::Compatibility`)
+        # but that doesn't work here because the schema dumper is not aware of which migration
+        # a column was added in.
+        assert output.include?('t.timestamp "this_should_change_to_timestamp"')
+        assert output.include?('t.timestamp "this_should_stay_as_timestamp"')
+        assert output.include?('t.timestamp "this_should_also_stay_as_timestamp"')
+      end
+    ensure
+      migration.migrate(:down)
+      $stdout = original
+    end
+
+    def test_schema_dump_when_changing_datetime_type_for_an_existing_app
+      original, $stdout = $stdout, StringIO.new
+
+      migration = Class.new(ActiveRecord::Migration::Current) do
+        def up
+          create_table("timestamps") do |t|
             t.datetime :default_format
             t.column :without_time_zone, :timestamp
             t.column :with_time_zone, :timestamptz
@@ -520,7 +650,16 @@ class SchemaDumperTest < ActiveRecord::TestCase
       assert output.include?('t.datetime "default_format"')
       assert output.include?('t.datetime "without_time_zone"')
       assert output.include?('t.timestamptz "with_time_zone"')
+
+      datetime_type_was = ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.datetime_type
+      ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.datetime_type = :timestamptz
+
+      output = perform_schema_dump
+      assert output.include?('t.timestamp "default_format"')
+      assert output.include?('t.timestamp "without_time_zone"')
+      assert output.include?('t.datetime "with_time_zone"')
     ensure
+      ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.datetime_type = datetime_type_was
       migration.migrate(:down)
       $stdout = original
     end
@@ -533,6 +672,7 @@ class SchemaDumperTest < ActiveRecord::TestCase
           create_table("timestamps") do |t|
             t.datetime :default_format
             t.datetime :without_time_zone
+            t.timestamp :also_without_time_zone
             t.timestamptz :with_time_zone
           end
         end
@@ -545,6 +685,7 @@ class SchemaDumperTest < ActiveRecord::TestCase
       output = perform_schema_dump
       assert output.include?('t.datetime "default_format"')
       assert output.include?('t.datetime "without_time_zone"')
+      assert output.include?('t.datetime "also_without_time_zone"')
       assert output.include?('t.timestamptz "with_time_zone"')
     ensure
       migration.migrate(:down)
@@ -559,7 +700,8 @@ class SchemaDumperTest < ActiveRecord::TestCase
           create_table("timestamps")
 
           add_column :timestamps, :default_format, :datetime
-          add_column :timestamps, :without_time_zone, :timestamp
+          add_column :timestamps, :without_time_zone, :datetime
+          add_column :timestamps, :also_without_time_zone, :timestamp
           add_column :timestamps, :with_time_zone, :timestamptz
         end
         def down
@@ -571,7 +713,100 @@ class SchemaDumperTest < ActiveRecord::TestCase
       output = perform_schema_dump
       assert output.include?('t.datetime "default_format"')
       assert output.include?('t.datetime "without_time_zone"')
+      assert output.include?('t.datetime "also_without_time_zone"')
       assert output.include?('t.timestamptz "with_time_zone"')
+    ensure
+      migration.migrate(:down)
+      $stdout = original
+    end
+
+    def test_schema_dump_with_correct_timestamp_types_via_add_column_before_rails_7
+      original, $stdout = $stdout, StringIO.new
+
+      migration = Class.new(ActiveRecord::Migration[6.1]) do
+        def up
+          create_table("timestamps")
+
+          add_column :timestamps, :default_format, :datetime
+          add_column :timestamps, :without_time_zone, :datetime
+          add_column :timestamps, :also_without_time_zone, :timestamp
+        end
+        def down
+          drop_table("timestamps")
+        end
+      end
+      migration.migrate(:up)
+
+      output = perform_schema_dump
+      assert output.include?('t.datetime "default_format"')
+      assert output.include?('t.datetime "without_time_zone"')
+      assert output.include?('t.datetime "also_without_time_zone"')
+    ensure
+      migration.migrate(:down)
+      $stdout = original
+    end
+
+    def test_schema_dump_with_correct_timestamp_types_via_add_column_before_rails_7_with_timestamptz_setting
+      migration, original, $stdout = nil, $stdout, StringIO.new
+
+      with_postgresql_datetime_type(:timestamptz) do
+        migration = Class.new(ActiveRecord::Migration[6.1]) do
+          def up
+            create_table("timestamps")
+
+            add_column :timestamps, :this_should_change_to_timestamp, :datetime
+            add_column :timestamps, :this_should_stay_as_timestamp, :timestamp
+          end
+          def down
+            drop_table("timestamps")
+          end
+        end
+        migration.migrate(:up)
+
+        output = perform_schema_dump
+        # Normally we'd write `t.datetime` here. But because you've changed the `datetime_type`
+        # to something else, `t.datetime` now means `:timestamptz`. To ensure that old columns
+        # are still created as a `:timestamp` we need to change what is written to the schema dump.
+        #
+        # Typically in Rails we handle this through Migration versioning (`ActiveRecord::Migration::Compatibility`)
+        # but that doesn't work here because the schema dumper is not aware of which migration
+        # a column was added in.
+        assert output.include?('t.timestamp "this_should_change_to_timestamp"')
+        assert output.include?('t.timestamp "this_should_stay_as_timestamp"')
+      end
+    ensure
+      migration.migrate(:down)
+      $stdout = original
+    end
+
+    def test_schema_dump_with_correct_timestamp_types_via_add_column_with_type_as_string
+      migration, original, $stdout = nil, $stdout, StringIO.new
+
+      with_postgresql_datetime_type(:timestamptz) do
+        migration = Class.new(ActiveRecord::Migration[6.1]) do
+          def up
+            create_table("timestamps")
+
+            add_column :timestamps, :this_should_change_to_timestamp, "datetime"
+            add_column :timestamps, :this_should_stay_as_timestamp, "timestamp"
+          end
+          def down
+            drop_table("timestamps")
+          end
+        end
+        migration.migrate(:up)
+
+        output = perform_schema_dump
+        # Normally we'd write `t.datetime` here. But because you've changed the `datetime_type`
+        # to something else, `t.datetime` now means `:timestamptz`. To ensure that old columns
+        # are still created as a `:timestamp` we need to change what is written to the schema dump.
+        #
+        # Typically in Rails we handle this through Migration versioning (`ActiveRecord::Migration::Compatibility`)
+        # but that doesn't work here because the schema dumper is not aware of which migration
+        # a column was added in.
+        assert output.include?('t.timestamp "this_should_change_to_timestamp"')
+        assert output.include?('t.timestamp "this_should_stay_as_timestamp"')
+      end
     ensure
       migration.migrate(:down)
       $stdout = original
@@ -590,6 +825,7 @@ class SchemaDumperDefaultsTest < ActiveRecord::TestCase
       t.datetime :datetime_with_default, default: "2014-06-05 07:17:04"
       t.time     :time_with_default,     default: "07:17:04"
       t.decimal  :decimal_with_default,  default: "1234567890.0123456789", precision: 20, scale: 10
+      t.text :text_with_default, default: "John' Doe" if supports_text_column_with_default?
     end
 
     if current_adapter?(:PostgreSQLAdapter)
@@ -613,13 +849,24 @@ class SchemaDumperDefaultsTest < ActiveRecord::TestCase
 
     assert_match %r{t\.string\s+"string_with_default",.*?default: "Hello!"}, output
     assert_match %r{t\.date\s+"date_with_default",\s+default: "2014-06-05"}, output
-    assert_match %r{t\.datetime\s+"datetime_with_default",\s+default: "2014-06-05 07:17:04"}, output
+
+    if supports_datetime_with_precision?
+      assert_match %r{t\.datetime\s+"datetime_with_default",\s+default: "2014-06-05 07:17:04"}, output
+    else
+      assert_match %r{t\.datetime\s+"datetime_with_default",\s+precision: nil,\s+default: "2014-06-05 07:17:04"}, output
+    end
+
     assert_match %r{t\.time\s+"time_with_default",\s+default: "2000-01-01 07:17:04"}, output
     assert_match %r{t\.decimal\s+"decimal_with_default",\s+precision: 20,\s+scale: 10,\s+default: "1234567890.0123456789"}, output
   end
 
+  def test_schema_dump_with_text_column
+    output = dump_table_schema("dump_defaults")
+
+    assert_match %r{t\.text\s+"text_with_default",.*?default: "John' Doe"}, output
+  end if supports_text_column_with_default?
+
   def test_schema_dump_with_column_infinity_default
-    skip unless current_adapter?(:PostgreSQLAdapter)
     output = dump_table_schema("infinity_defaults")
     assert_match %r{t\.float\s+"float_with_inf_default",\s+default: ::Float::INFINITY}, output
     assert_match %r{t\.float\s+"float_with_nan_default",\s+default: ::Float::NAN}, output
@@ -627,5 +874,5 @@ class SchemaDumperDefaultsTest < ActiveRecord::TestCase
     assert_match %r{t\.datetime\s+"end_of_time",\s+default: ::Float::INFINITY}, output
     assert_match %r{t\.date\s+"date_with_neg_inf_default",\s+default: -::Float::INFINITY}, output
     assert_match %r{t\.date\s+"date_with_pos_inf_default",\s+default: ::Float::INFINITY}, output
-  end
+  end if current_adapter?(:PostgreSQLAdapter)
 end
